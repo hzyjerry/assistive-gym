@@ -1,32 +1,58 @@
-import os, time, datetime, configparser
+import os, time, configparser
+import numpy as np
 import gym
 from gym import spaces
 from gym.utils import seeding
-import numpy as np
-import pybullet as p
-# import cv2
-from keras.models import load_model
 from screeninfo import get_monitors
+import pybullet as p
+from keras.models import load_model
 
 from .util import Util
-from .world_creation import WorldCreation
+from .human_creation import HumanCreation
+from .agents import agent, human, robot, tool, furniture
+from .agents.agent import Agent
+from .agents.human import Human
+from .agents.robot import Robot
+from .agents.tool import Tool
+from .agents.furniture import Furniture
 
 class AssistiveEnv(gym.Env):
-    def __init__(self, robot_type='pr2', task='scratch_itch', human_control=False, frame_skip=5, time_step=0.02, action_robot_len=7, action_human_len=0, obs_robot_len=30, obs_human_len=0):
-        # Start the bullet physics server
-        self.id = p.connect(p.DIRECT)
-        # print('Physics server ID:', self.id)
-        self.gui = False
-
-        self.robot_type = robot_type
+    def __init__(self, robot=None, human=None, task='', obs_robot_len=0, obs_human_len=0, time_step=0.02, frame_skip=5, render=False, gravity=-9.81, seed=1001):
         self.task = task
-        self.human_control = human_control
-        self.action_robot_len = action_robot_len
-        self.action_human_len = action_human_len
+        self.time_step = time_step
+        self.frame_skip = frame_skip
+        self.gravity = gravity
+        self.id = None
+        self.gui = False
+        self.gpu = False
+        self.view_matrix = None
+        self.seed(seed)
+        if render:
+            self.render()
+        else:
+            self.id = p.connect(p.DIRECT)
+            self.util = Util(self.id, self.np_random)
+
+        self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets')
+        self.human_creation = HumanCreation(self.id, np_random=self.np_random, cloth=('dressing' in task))
+        self.human_limits_model = load_model(os.path.join(self.directory, 'realistic_arm_limits_model.h5'))
+        self.action_robot_len = len(robot.controllable_joint_indices) if robot is not None else 0
+        self.action_human_len = len(human.controllable_joint_indices) if human is not None and human.controllable else 0
+        self.action_space = spaces.Box(low=np.array([-1.0]*(self.action_robot_len+self.action_human_len), dtype=np.float32), high=np.array([1.0]*(self.action_robot_len+self.action_human_len), dtype=np.float32), dtype=np.float32)
         self.obs_robot_len = obs_robot_len
-        self.obs_human_len = obs_human_len
-        self.action_space = spaces.Box(low=np.array([-1.0]*(self.action_robot_len+self.action_human_len)), high=np.array([1.0]*(self.action_robot_len+self.action_human_len)), dtype=np.float32)
-        self.observation_space = spaces.Box(low=np.array([-1.0]*(self.obs_robot_len+self.obs_human_len)), high=np.array([1.0]*(self.obs_robot_len+self.obs_human_len)), dtype=np.float32)
+        self.obs_human_len = obs_human_len if human is not None and human.controllable else 0
+        self.observation_space = spaces.Box(low=np.array([-1000000000.0]*(self.obs_robot_len+self.obs_human_len), dtype=np.float32), high=np.array([1000000000.0]*(self.obs_robot_len+self.obs_human_len), dtype=np.float32), dtype=np.float32)
+        self.action_space_robot = spaces.Box(low=np.array([-1.0]*self.action_robot_len, dtype=np.float32), high=np.array([1.0]*self.action_robot_len, dtype=np.float32), dtype=np.float32)
+        self.action_space_human = spaces.Box(low=np.array([-1.0]*self.action_human_len, dtype=np.float32), high=np.array([1.0]*self.action_human_len, dtype=np.float32), dtype=np.float32)
+        self.observation_space_robot = spaces.Box(low=np.array([-1000000000.0]*self.obs_robot_len, dtype=np.float32), high=np.array([1000000000.0]*self.obs_robot_len, dtype=np.float32), dtype=np.float32)
+        self.observation_space_human = spaces.Box(low=np.array([-1000000000.0]*self.obs_human_len, dtype=np.float32), high=np.array([1000000000.0]*self.obs_human_len, dtype=np.float32), dtype=np.float32)
+
+        self.agents = []
+        self.plane = Agent()
+        self.robot = robot
+        self.human = human
+        self.tool = Tool()
+        self.furniture = Furniture()
 
         self.configp = configparser.ConfigParser()
         self.configp.read(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'config.ini'))
@@ -39,166 +65,173 @@ class AssistiveEnv(gym.Env):
         self.C_d = self.config('dressing_force_weight', 'human_preferences')
         self.C_p = self.config('high_pressures_weight', 'human_preferences')
 
-        # Execute actions at 10 Hz by default. A new action every 0.1 seconds
-        self.frame_skip = frame_skip
-        self.time_step = time_step
+    def step(self, action):
+        raise NotImplementedError('Implement observations')
 
-        self.setup_timing()
-        self.seed(1001)
+    def _get_obs(self, agent=None):
+        raise NotImplementedError('Implement observations')
 
-        self.world_creation = WorldCreation(self.id, robot_type=robot_type, task=task, time_step=self.time_step, np_random=self.np_random, config=self.config)
-        self.util = Util(self.id, self.np_random)
-
-        self.record_video = False
-        self.video_writer = None
-        try:
-            self.width = get_monitors()[0].width
-            self.height = get_monitors()[0].height
-        except Exception as e:
-            self.width = 1920
-            self.height = 1080
-            # self.width = 3840
-            # self.height = 2160
-
-        self.human_limits_model = load_model(os.path.join(self.world_creation.directory, 'realistic_arm_limits_model.h5'))
-        self.right_arm_previous_valid_pose = None
-        self.left_arm_previous_valid_pose = None
-        self.human_joint_lower_limits = None
-        self.human_joint_upper_limits = None
+    def config(self, tag, section=None):
+        return float(self.configp[self.task if section is None else section][tag])
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def step(self, action):
-        raise NotImplementedError('Implement observations')
+    def set_seed(self, seed=1000):
+        self.np_random.seed(seed)
 
-    def _get_obs(self, forces):
-        raise NotImplementedError('Implement observations')
+    def enable_gpu_rendering(self):
+        self.gpu = True
+
+    def disconnect(self):
+        p.disconnect(self.id)
 
     def reset(self):
-        raise NotImplementedError('Implement reset')
+        p.resetSimulation(physicsClientId=self.id)
+        if not self.gui:
+            # Reconnect the physics engine to forcefully clear memory when running long training scripts
+            self.disconnect()
+            self.id = p.connect(p.DIRECT)
+            self.util = Util(self.id, self.np_random)
+        if self.gpu:
+            self.util.enable_gpu()
+        # Configure camera position
+        p.resetDebugVisualizerCamera(cameraDistance=1.75, cameraYaw=-25, cameraPitch=-45, cameraTargetPosition=[-0.2, 0, 0.4], physicsClientId=self.id)
+        p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 0, physicsClientId=self.id)
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0, physicsClientId=self.id)
+        p.setTimeStep(self.time_step, physicsClientId=self.id)
+        # Disable real time simulation so that the simulation only advances when we call stepSimulation
+        p.setRealTimeSimulation(0, physicsClientId=self.id)
+        p.setGravity(0, 0, self.gravity, physicsClientId=self.id)
+        self.agents = []
+        self.last_sim_time = None
+        self.iteration = 0
+        self.forces = []
+        self.task_success = 0
 
-    def config(self, tag, section=None):
-        return float(self.configp[self.task if section is None else section][tag])
+    def build_assistive_env(self, furniture_type=None, fixed_human_base=True, human_impairment='random', gender='random'):
+        # Build plane, furniture, robot, human, etc. (just like world creation)
+        # Load the ground plane
+        plane = p.loadURDF(os.path.join(self.directory, 'plane', 'plane.urdf'), physicsClientId=self.id)
+        self.plane.init(plane, self.id, self.np_random, indices=-1)
+        # Randomly set friction of the ground
+        self.plane.set_frictions(self.plane.base, lateral_friction=self.np_random.uniform(0.025, 0.5), spinning_friction=0, rolling_friction=0)
+        # Disable rendering during creation
+        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0, physicsClientId=self.id)
+        # Create robot
+        if self.robot is not None:
+            self.robot.init(self.directory, self.id, self.np_random, fixed_base=not self.robot.mobile)
+            self.agents.append(self.robot)
+        # Create human
+        if self.human is not None and isinstance(self.human, Human):
+            self.human.init(self.human_creation, self.human_limits_model, fixed_human_base, human_impairment, gender, self.config, self.id, self.np_random)
+            if self.human.controllable or self.human.impairment == 'tremor':
+                self.agents.append(self.human)
+        # Create furniture (wheelchair, bed, or table)
+        if furniture_type is not None:
+            self.furniture.init(furniture_type, self.directory, self.id, self.np_random, wheelchair_mounted=self.robot.wheelchair_mounted if self.robot is not None else False)
 
-    def take_step(self, action, robot_arm='left', gains=0.05, forces=1, human_gains=0.1, human_forces=1, step_sim=True):
-        action = np.clip(action, a_min=self.action_space.low, a_max=self.action_space.high)
-        # print('cameraYaw=%.2f, cameraPitch=%.2f, distance=%.2f' % p.getDebugVisualizerCamera(physicsClientId=self.id)[-4:-1])
+    def init_env_variables(self, reset=False):
+        if len(self.action_space.low) <= 1 or reset:
+            obs_len = len(self._get_obs())
+            self.observation_space.__init__(low=-np.ones(obs_len, dtype=np.float32)*1000000000, high=np.ones(obs_len, dtype=np.float32)*1000000000, dtype=np.float32)
+            self.update_action_space()
+            # Define action/obs lengths
+            self.action_robot_len = len(self.robot.controllable_joint_indices)
+            self.action_human_len = len(self.human.controllable_joint_indices) if self.human.controllable else 0
+            self.obs_robot_len = len(self._get_obs('robot'))
+            self.obs_human_len = len(self._get_obs('human'))
+            self.action_space_robot = spaces.Box(low=np.array([-1.0]*self.action_robot_len, dtype=np.float32), high=np.array([1.0]*self.action_robot_len, dtype=np.float32), dtype=np.float32)
+            self.action_space_human = spaces.Box(low=np.array([-1.0]*self.action_human_len, dtype=np.float32), high=np.array([1.0]*self.action_human_len, dtype=np.float32), dtype=np.float32)
+            self.observation_space_robot = spaces.Box(low=np.array([-1000000000.0]*self.obs_robot_len, dtype=np.float32), high=np.array([1000000000.0]*self.obs_robot_len, dtype=np.float32), dtype=np.float32)
+            self.observation_space_human = spaces.Box(low=np.array([-1000000000.0]*self.obs_human_len, dtype=np.float32), high=np.array([1000000000.0]*self.obs_human_len, dtype=np.float32), dtype=np.float32)
 
-        # print('Total time:', self.total_time)
-        # self.total_time += 0.1
-        self.iteration += 1
+    def update_action_space(self):
+        action_len = np.sum([len(a.controllable_joint_indices) for a in self.agents if not isinstance(a, Human) or a.controllable])
+        self.action_space.__init__(low=-np.ones(action_len, dtype=np.float32), high=np.ones(action_len, dtype=np.float32), dtype=np.float32)
+
+    def create_human(self, controllable=False, controllable_joint_indices=[], fixed_base=False, human_impairment='random', gender='random', mass=None, radius_scale=1.0, height_scale=1.0):
+        '''
+        human_impairement in ['none', 'limits', 'weakness', 'tremor']
+        gender in ['male', 'female']
+        '''
+        self.human = Human(controllable_joint_indices, controllable=controllable)
+        self.human.init(self.human_creation, self.human_limits_model, fixed_base, human_impairment, gender, None, self.id, self.np_random, mass=mass, radius_scale=radius_scale, height_scale=height_scale)
+        if controllable or self.human.impairment == 'tremor':
+            self.agents.append(self.human)
+            self.update_action_space()
+        return self.human
+
+    def create_robot(self, robot_class, controllable_joints='right', fixed_base=True):
+        self.robot = robot_class(controllable_joints)
+        self.robot.init(self.directory, self.id, self.np_random, fixed_base=fixed_base)
+        self.agents.append(self.robot)
+        self.update_action_space()
+        return self.robot
+
+    def take_step(self, actions, gains=None, forces=None, action_multiplier=0.05, step_sim=True):
+        if gains is None:
+            gains = [a.motor_gains for a in self.agents]
+        elif type(gains) not in (list, tuple):
+            gains = [gains]*len(self.agents)
+        if forces is None:
+            forces = [a.motor_forces for a in self.agents]
+        elif type(forces) not in (list, tuple):
+            forces = [forces]*len(self.agents)
         if self.last_sim_time is None:
             self.last_sim_time = time.time()
-
-        action *= 0.05
-        action_robot = action
-        indices = self.robot_left_arm_joint_indices if robot_arm == 'left' else self.robot_right_arm_joint_indices if robot_arm == 'right' else self.robot_both_arm_joint_indices
-
-        if self.human_control or (self.world_creation.human_impairment == 'tremor' and self.human_controllable_joint_indices):
-            human_len = len(self.human_controllable_joint_indices)
-            if self.human_control:
-                action_robot = action[:self.action_robot_len]
-                action_human = action[self.action_robot_len:]
+        self.iteration += 1
+        self.forces = []
+        actions = np.clip(actions, a_min=self.action_space.low, a_max=self.action_space.high)
+        actions *= action_multiplier
+        action_index = 0
+        for i, agent in enumerate(self.agents):
+            needs_action = not isinstance(agent, Human) or agent.controllable
+            if needs_action:
+                agent_action_len = len(agent.controllable_joint_indices)
+                action = np.copy(actions[action_index:action_index+agent_action_len])
+                action_index += agent_action_len
+                if isinstance(agent, Robot):
+                    action *= agent.action_multiplier
+                if len(action) != agent_action_len:
+                    print('Received agent actions of length %d does not match expected action length of %d' % (len(action), agent_action_len))
+                    exit()
+            # Append the new action to the current measured joint angles
+            agent_joint_angles = agent.get_joint_angles(agent.controllable_joint_indices)
+            # Update the target robot/human joint angles based on the proposed action and joint limits
+            for _ in range(self.frame_skip):
+                if needs_action:
+                    below_lower_limits = agent_joint_angles + action < agent.controllable_joint_lower_limits
+                    above_upper_limits = agent_joint_angles + action > agent.controllable_joint_upper_limits
+                    action[below_lower_limits] = 0
+                    action[above_upper_limits] = 0
+                    agent_joint_angles[below_lower_limits] = agent.controllable_joint_lower_limits[below_lower_limits]
+                    agent_joint_angles[above_upper_limits] = agent.controllable_joint_upper_limits[above_upper_limits]
+                if isinstance(agent, Human) and agent.impairment == 'tremor':
+                    if needs_action:
+                        agent.target_joint_angles += action
+                    agent_joint_angles = agent.target_joint_angles + agent.tremors * (1 if self.iteration % 2 == 0 else -1)
+                else:
+                    agent_joint_angles += action
+            if isinstance(agent, Robot) and agent.action_duplication is not None:
+                agent_joint_angles = np.concatenate([[a]*d for a, d in zip(agent_joint_angles, self.robot.action_duplication)])
+                agent.control(agent.all_controllable_joints, agent_joint_angles, agent.gains, agent.forces)
             else:
-                action_human = np.zeros(human_len)
-            if len(action_human) != human_len:
-                print('Received human actions of length %d does not match expected action length of %d' % (len(action_human), human_len))
-                exit()
-            human_joint_states = p.getJointStates(self.human, jointIndices=self.human_controllable_joint_indices, physicsClientId=self.id)
-            human_joint_positions = np.array([x[0] for x in human_joint_states])
-
-        robot_joint_states = p.getJointStates(self.robot, jointIndices=indices, physicsClientId=self.id)
-        robot_joint_positions = np.array([x[0] for x in robot_joint_states])
-
-        for _ in range(self.frame_skip):
-            action_robot[robot_joint_positions + action_robot < self.robot_lower_limits] = 0
-            action_robot[robot_joint_positions + action_robot > self.robot_upper_limits] = 0
-            robot_joint_positions += action_robot
-            if self.human_control or (self.world_creation.human_impairment == 'tremor' and self.human_controllable_joint_indices):
-                action_human[human_joint_positions + action_human < self.human_lower_limits] = 0
-                action_human[human_joint_positions + action_human > self.human_upper_limits] = 0
-                if self.world_creation.human_impairment == 'tremor':
-                    human_joint_positions = self.target_human_joint_positions + self.world_creation.human_tremors * (1 if self.iteration % 2 == 0 else -1)
-                    self.target_human_joint_positions += action_human
-                human_joint_positions += action_human
-
-        p.setJointMotorControlArray(self.robot, jointIndices=indices, controlMode=p.POSITION_CONTROL, targetPositions=robot_joint_positions, positionGains=np.array([gains]*self.action_robot_len), forces=[forces]*self.action_robot_len, physicsClientId=self.id)
-        if self.human_control or (self.world_creation.human_impairment == 'tremor' and self.human_controllable_joint_indices):
-            p.setJointMotorControlArray(self.human, jointIndices=self.human_controllable_joint_indices, controlMode=p.POSITION_CONTROL, targetPositions=human_joint_positions, positionGains=np.array([human_gains]*human_len), forces=[human_forces*self.world_creation.human_strength]*human_len, physicsClientId=self.id)
-
+                agent.control(agent.controllable_joint_indices, agent_joint_angles, gains[i], forces[i])
         if step_sim:
-            # Update robot position
+            # Update all agent positions
             for _ in range(self.frame_skip):
                 p.stepSimulation(physicsClientId=self.id)
-                if self.human_control:
-                    self.enforce_realistic_human_joint_limits()
-                self.enforce_hard_human_joint_limits()
+                for agent in self.agents:
+                    if isinstance(agent, Human):
+                        agent.enforce_joint_limits()
+                        if agent.controllable:
+                            agent.enforce_realistic_joint_limits()
                 self.update_targets()
                 if self.gui:
                     # Slow down time so that the simulation matches real time
                     self.slow_time()
-            self.record_video_frame()
-
-    def enforce_realistic_human_joint_limits(self):
-        # Only enforce limits for the human arm that is moveable (if either arm is even moveable)
-        if 3 in self.human_controllable_joint_indices:
-            # Right human arm
-            tz, tx, ty, qe = [j[0] for j in p.getJointStates(self.human, jointIndices=[3, 4, 5, 6], physicsClientId=self.id)]
-            # Transform joint angles to match those from the Matlab data
-            tz2 = (-tz + 2*np.pi) % (2*np.pi)
-            tx2 = (tx + 2*np.pi) % (2*np.pi)
-            ty2 = -ty
-            qe2 = (-qe + 2*np.pi) % (2*np.pi)
-            result = self.human_limits_model.predict_classes(np.array([[tz2, tx2, ty2, qe2]]))
-            if result == 1:
-                # This is a valid pose for the person
-                self.right_arm_previous_valid_pose = [tz, tx, ty, qe]
-            elif result == 0 and self.right_arm_previous_valid_pose is not None:
-                # The person is in an invalid pose. Move them back to the most recent valid pose.
-                for i, j in enumerate([3, 4, 5, 6]):
-                    p.resetJointState(self.human, jointIndex=j, targetValue=self.right_arm_previous_valid_pose[i], targetVelocity=0, physicsClientId=self.id)
-        if 13 in self.human_controllable_joint_indices:
-            # Left human arm
-            tz, tx, ty, qe = [j[0] for j in p.getJointStates(self.human, jointIndices=[13, 14, 15, 16], physicsClientId=self.id)]
-            # Transform joint angles to match those from the Matlab data
-            tz2 = (tz + 2*np.pi) % (2*np.pi)
-            tx2 = (tx + 2*np.pi) % (2*np.pi)
-            ty2 = ty
-            qe2 = (-qe + 2*np.pi) % (2*np.pi)
-            result = self.human_limits_model.predict_classes(np.array([[tz2, tx2, ty2, qe2]]))
-            if result == 1:
-                # This is a valid pose for the person
-                self.left_arm_previous_valid_pose = [tz, tx, ty, qe]
-            elif result == 0 and self.left_arm_previous_valid_pose is not None:
-                # The person is in an invalid pose. Move them back to the most recent valid pose.
-                for i, j in enumerate([13, 14, 15, 16]):
-                    p.resetJointState(self.human, jointIndex=j, targetValue=self.left_arm_previous_valid_pose[i], targetVelocity=0, physicsClientId=self.id)
-
-    def enforce_hard_human_joint_limits(self):
-        if not self.human_controllable_joint_indices:
-            return
-        # Enforce joint limits. Sometimes, external forces and break the person's hard joint limits.
-        joint_states = p.getJointStates(self.human, jointIndices=self.human_controllable_joint_indices, physicsClientId=self.id)
-        joint_positions = np.array([x[0] for x in joint_states])
-        if self.human_joint_lower_limits is None:
-            self.human_joint_lower_limits = []
-            self.human_joint_upper_limits = []
-            for i, j in enumerate(self.human_controllable_joint_indices):
-                joint_info = p.getJointInfo(self.human, j, physicsClientId=self.id)
-                joint_name = joint_info[1]
-                joint_pos = joint_positions[i]
-                lower_limit = joint_info[8]
-                upper_limit = joint_info[9]
-                self.human_joint_lower_limits.append(lower_limit)
-                self.human_joint_upper_limits.append(upper_limit)
-                # print(joint_name, joint_pos, lower_limit, upper_limit)
-        for i, j in enumerate(self.human_controllable_joint_indices):
-            if joint_positions[i] < self.human_joint_lower_limits[i]:
-                p.resetJointState(self.human, jointIndex=j, targetValue=self.human_joint_lower_limits[i], targetVelocity=0, physicsClientId=self.id)
-            elif joint_positions[i] > self.human_joint_upper_limits[i]:
-                p.resetJointState(self.human, jointIndex=j, targetValue=self.human_joint_upper_limits[i], targetVelocity=0, physicsClientId=self.id)
 
     def human_preferences(self, end_effector_velocity=0, total_force_on_human=0, tool_force_at_target=0, food_hit_human_reward=0, food_mouth_velocities=[], dressing_forces=[[]], arm_manipulation_tool_forces_on_human=[0, 0], arm_manipulation_total_force_on_human=0):
         # Slow end effector velocities
@@ -212,7 +245,7 @@ class AssistiveEnv(gym.Env):
         reward_force_nontarget = -(total_force_on_human - tool_force_at_target)
 
         # --- Scooping, Feeding, Drinking ---
-        if self.task in ['scooping', 'feeding', 'drinking']:
+        if self.task in ['feeding', 'drinking']:
             # Penalty when robot's body applies force onto a person
             reward_force_nontarget = -total_force_on_human
         # Penalty when robot spills food on the person
@@ -226,154 +259,55 @@ class AssistiveEnv(gym.Env):
 
         # --- Arm Manipulation ---
         # Penalty for applying large pressure to the person (high forces over small surface areas)
-        if self.task in ['arm_manipulation']:
-            tool_left_contact_points = len(p.getClosestPoints(bodyA=self.robot, bodyB=self.human, linkIndexA=(78 if self.robot_type=='pr2' else 24 if self.robot_type=='sawyer' else 54 if self.robot_type=='baxter' else 9 if self.robot_type=='jaco' else 7), distance=0.01, physicsClientId=self.id))
-            tool_right_contact_points = len(p.getClosestPoints(bodyA=self.robot, bodyB=self.human, linkIndexA=(55 if self.robot_type=='pr2' else 24 if self.robot_type=='sawyer' else 31 if self.robot_type=='baxter' else 9 if self.robot_type=='jaco' else 7), distance=0.01, physicsClientId=self.id))
-            tool_left_pressure = 0 if tool_left_contact_points <= 0 else (arm_manipulation_tool_forces_on_human[0] / tool_left_contact_points)
-            tool_right_pressure = 0 if tool_right_contact_points <= 0 else (arm_manipulation_tool_forces_on_human[1] / tool_right_contact_points)
-            reward_arm_manipulation_tool_pressures = -(tool_left_pressure + tool_right_pressure)
+        if self.task == 'arm_manipulation':
+            tool_right_contact_points = len(self.tool_right.get_closest_points(self.human, distance=0.01)[-1])
+            tool_left_contact_points = len(self.tool_left.get_closest_points(self.human, distance=0.01)[-1])
+            tool_right_pressure = 0 if tool_right_contact_points <= 0 else (arm_manipulation_tool_forces_on_human[0] / tool_right_contact_points)
+            tool_left_pressure = 0 if tool_left_contact_points <= 0 else (arm_manipulation_tool_forces_on_human[1] / tool_left_contact_points)
+
+            reward_arm_manipulation_tool_pressures = -(tool_right_pressure + tool_left_pressure)
             reward_force_nontarget = -(arm_manipulation_total_force_on_human - np.sum(arm_manipulation_tool_forces_on_human))
         else:
             reward_arm_manipulation_tool_pressures = 0.0
 
         return self.C_v*reward_velocity + self.C_f*reward_force_nontarget + self.C_hf*reward_high_target_forces + self.C_fd*reward_food_hit_human + self.C_fdv*reward_food_velocities + self.C_d*reward_dressing_force + self.C_p*reward_arm_manipulation_tool_pressures
 
-    def reset_robot_joints(self):
-        # Reset all robot joints
-        for rj in range(p.getNumJoints(self.robot, physicsClientId=self.id)):
-            p.resetJointState(self.robot, jointIndex=rj, targetValue=0, targetVelocity=0, physicsClientId=self.id)
-        # Position end effectors whith dual arm robots
-        if self.robot_type == 'pr2':
-            for i, j in enumerate(self.robot_left_arm_joint_indices):
-                p.resetJointState(self.robot, jointIndex=j, targetValue=[1.75, 1.25, 1.5, -0.5, 1, 0, 1][i], targetVelocity=0, physicsClientId=self.id)
-            for i, j in enumerate(self.robot_right_arm_joint_indices):
-                p.resetJointState(self.robot, jointIndex=j, targetValue=[-1.75, 1.25, -1.5, -0.5, -1, 0, -1][i], targetVelocity=0, physicsClientId=self.id)
-        elif self.robot_type == 'baxter':
-            for i, j in enumerate(self.robot_left_arm_joint_indices):
-                p.resetJointState(self.robot, jointIndex=j, targetValue=[0.75, 1, 0.5, 0.5, 1, -0.5, 0][i], targetVelocity=0, physicsClientId=self.id)
-            for i, j in enumerate(self.robot_right_arm_joint_indices):
-                p.resetJointState(self.robot, jointIndex=j, targetValue=[-0.75, 1, -0.5, 0.5, -1, -0.5, 0][i], targetVelocity=0, physicsClientId=self.id)
-
-    def joint_limited_weighting(self, q, lower_limits, upper_limits):
-        phi = 0.5
-        lam = 0.05
-        weights = []
-        for qi, l, u in zip(q, lower_limits, upper_limits):
-            qr = 0.5*(u - l)
-            weights.append(1.0 - np.power(phi, (qr - np.abs(qr - qi + l)) / (lam*qr) + 1))
-            if weights[-1] < 0.001:
-                weights[-1] = 0.001
-        # Joint-limited-weighting
-        joint_limit_weight = np.diag(weights)
-        return joint_limit_weight
-
-    def get_motor_joint_states(self, robot):
-        num_joints = p.getNumJoints(robot, physicsClientId=self.id)
-        joint_states = p.getJointStates(robot, range(num_joints), physicsClientId=self.id)
-        joint_infos = [p.getJointInfo(robot, i, physicsClientId=self.id) for i in range(num_joints)]
-        joint_states = [j for j, i in zip(joint_states, joint_infos) if i[2] != p.JOINT_FIXED]
-        joint_positions = [state[0] for state in joint_states]
-        joint_velocities = [state[1] for state in joint_states]
-        joint_torques = [state[3] for state in joint_states]
-        return joint_positions, joint_velocities, joint_torques
-
-    def position_robot_toc(self, robot, joints, start_pos_orient, target_pos_orients, joint_indices, lower_limits, upper_limits, ik_indices, pos_offset=np.zeros(3), base_euler_orient=np.zeros(3), max_ik_iterations=500, attempts=100, ik_random_restarts=1, step_sim=False, check_env_collisions=False, right_side=True, random_rotation=30, random_position=0.5, human_joint_indices=None, human_joint_positions=None):
-        # Continually randomize the robot base position and orientation
-        # Select best base pose according to number of goals reached and manipulability
-        if type(joints) == int:
-            joints = [joints]
-            start_pos_orient = [start_pos_orient]
-            target_pos_orients = [target_pos_orients]
-            joint_indices = [joint_indices]
-            lower_limits = [lower_limits]
-            upper_limits = [upper_limits]
-            ik_indices = [ik_indices]
-        a = 6 # Order of the robot space. 6D (3D position, 3D orientation)
-        best_position = None
-        best_orientation = None
-        best_num_goals_reached = None
-        best_manipulability = None
-        best_start_joint_poses = [None]*len(joints)
-        start_fails = 0
-        iteration = 0
-        best_pose_count = 0
-        while iteration < attempts or best_position is None:
-            iteration += 1
-            random_pos = np.array([self.np_random.uniform(-random_position if right_side else 0, 0 if right_side else random_position), self.np_random.uniform(-random_position, random_position), 0])
-            random_orientation = p.getQuaternionFromEuler([base_euler_orient[0], base_euler_orient[1], base_euler_orient[2] + np.deg2rad(self.np_random.uniform(-random_rotation, random_rotation))], physicsClientId=self.id)
-            p.resetBasePositionAndOrientation(robot, np.array([-0.85, -0.4, 0]) + pos_offset + random_pos, random_orientation, physicsClientId=self.id)
-            # Check if the robot can reach all target locations from this base pose
-            num_goals_reached = 0
-            manipulability = 0.0
-            start_joint_poses = [None]*len(joints)
-            for i, joint in enumerate(joints):
-                for j, (target_pos, target_orient) in enumerate(start_pos_orient[i] + target_pos_orients[i]):
-                    best_jlwki = None
-                    goal_success = False
-                    orient = target_orient
-                    for k in range(ik_random_restarts):
-                        # Reset human joints in case they got perturbed by previous iterations
-                        if human_joint_positions is not None:
-                            for h, pos in zip(human_joint_indices, human_joint_positions):
-                                p.resetJointState(self.human, jointIndex=h, targetValue=pos, targetVelocity=0, physicsClientId=self.id)
-                        # Reset all robot joints
-                        self.reset_robot_joints()
-                        # Find IK solution
-                        success, joint_positions_q_star = self.util.ik_jlwki(robot, joint, target_pos, orient, self.world_creation, joint_indices[i], lower_limits[i], upper_limits[i], ik_indices=ik_indices[i], max_iterations=max_ik_iterations, success_threshold=0.03, half_range=(self.robot_type=='baxter'), step_sim=step_sim, check_env_collisions=check_env_collisions)
-                        if success:
-                            goal_success = True
-                        else:
-                            goal_success = False
-                            break
-                        joint_positions, _, _ = self.get_motor_joint_states(robot)
-                        joint_velocities = [0.0] * len(joint_positions)
-                        joint_accelerations = [0.0] * len(joint_positions)
-                        center_of_mass = p.getLinkState(robot, joint, computeLinkVelocity=True, computeForwardKinematics=True, physicsClientId=self.id)[2]
-                        J_linear, J_angular = p.calculateJacobian(robot, joint, localPosition=center_of_mass, objPositions=joint_positions, objVelocities=joint_velocities, objAccelerations=joint_accelerations, physicsClientId=self.id)
-                        J_linear = np.array(J_linear)[:, ik_indices[i]]
-                        J_angular = np.array(J_angular)[:, ik_indices[i]]
-                        J = np.concatenate([J_linear, J_angular], axis=0)
-                        # Joint-limited-weighting
-                        joint_limit_weight = self.joint_limited_weighting(joint_positions_q_star, lower_limits[i], upper_limits[i])
-                        # Joint-limited-weighted kinematic isotropy (JLWKI)
-                        det = np.linalg.det(np.matmul(np.matmul(J, joint_limit_weight), J.T))
-                        if det < 0:
-                            det = 0
-                        jlwki = np.power(det, 1.0/a) / (np.trace(np.matmul(np.matmul(J, joint_limit_weight), J.T))/a)
-                        if best_jlwki is None or jlwki > best_jlwki:
-                            best_jlwki = jlwki
-                    if goal_success:
-                        num_goals_reached += 1
-                        manipulability += best_jlwki
-                        if j == 0:
-                            start_joint_poses[i] = joint_positions_q_star
-                    if j < len(start_pos_orient[i]) and not goal_success:
-                        # Not able to find an IK solution to a start goal. We cannot use this base pose
-                        start_fails += 1
-                        num_goals_reached = -1
-                        manipulability = None
-                        break
-                if num_goals_reached == -1:
-                    break
-
-            if num_goals_reached == 4:
-                best_pose_count += 1
-            if num_goals_reached > 0:
-                if best_position is None or num_goals_reached > best_num_goals_reached or (num_goals_reached == best_num_goals_reached and manipulability > best_manipulability):
-                    best_position = random_pos
-                    best_orientation = random_orientation
-                    best_num_goals_reached = num_goals_reached
-                    best_manipulability = manipulability
-                    best_start_joint_poses = start_joint_poses
-
-        p.resetBasePositionAndOrientation(robot, np.array([-0.85, -0.4, 0]) + pos_offset + best_position, best_orientation, physicsClientId=self.id)
-        for i, joint in enumerate(joints):
-            self.world_creation.setup_robot_joints(robot, joint_indices[i], lower_limits[i], upper_limits[i], randomize_joint_positions=False, default_positions=np.array(best_start_joint_poses[i]), tool=None)
-        # Reset human joints in case they got perturbed by previous iterations
-        if human_joint_positions is not None:
-            for h, pos in zip(human_joint_indices, human_joint_positions):
-                p.resetJointState(self.human, jointIndex=h, targetValue=pos, targetVelocity=0, physicsClientId=self.id)
-        return best_position, best_orientation, best_start_joint_poses
+    def init_robot_pose(self, target_ee_pos, target_ee_orient, start_pos_orient, target_pos_orients, arm='right', tools=[], collision_objects=[], wheelchair_enabled=True, right_side=True, max_iterations=3):
+        base_position = None
+        if self.robot.skip_pose_optimization:
+            return base_position
+        # Continually resample initial robot pose until we find one where the robot isn't colliding with the person
+        for _ in range(max_iterations):
+            if self.robot.mobile:
+                # Randomize robot base pose
+                pos = np.array(self.robot.toc_base_pos_offset[self.task])
+                pos[:2] += self.np_random.uniform(-0.1, 0.1, size=2)
+                orient = np.array(self.robot.toc_ee_orient_rpy[self.task])
+                if self.task != 'dressing':
+                    orient[2] += self.np_random.uniform(-np.deg2rad(30), np.deg2rad(30))
+                else:
+                    orient = orient[0]
+                self.robot.set_base_pos_orient(pos, orient)
+                # Randomize starting joint angles
+                self.robot.randomize_init_joint_angles(self.task)
+            elif self.robot.wheelchair_mounted and wheelchair_enabled:
+                # Use IK to find starting joint angles for mounted robots
+                # self.robot.ik_random_restarts(right=(arm == 'right'), target_pos=target_ee_pos, target_orient=target_ee_orient, max_iterations=200, max_ik_random_restarts=1000, success_threshold=0.01, step_sim=False, check_env_collisions=False, randomize_limits=True)
+                self.robot.ik_random_restarts(right=(arm == 'right'), target_pos=target_ee_pos, target_orient=target_ee_orient, max_iterations=1000, max_ik_random_restarts=40, success_threshold=0.01, step_sim=True, check_env_collisions=False, randomize_limits=False)
+            else:
+                # Use TOC with JLWKI to find an optimal base position for the robot near the person
+                base_position, _, _ = self.robot.position_robot_toc(self.task, arm, start_pos_orient, target_pos_orients, self.human, step_sim=False, check_env_collisions=False, max_ik_iterations=100, max_ik_random_restarts=1, randomize_limits=False, right_side=right_side, base_euler_orient=[0, 0, 0 if right_side else np.pi], attempts=50)
+            # Check if the robot or tool is colliding with objects in the environment. If so, then continue sampling.
+            dists_list = []
+            for tool in tools:
+                tool.reset_pos_orient()
+                for obj in collision_objects:
+                    dists_list.append(tool.get_closest_points(obj, distance=0)[-1])
+            for obj in collision_objects:
+                dists_list.append(self.robot.get_closest_points(obj, distance=0)[-1])
+            if all(not d for d in dists_list):
+                break
+        return base_position
 
     def slow_time(self):
         # Slow down time so that the simulation matches real time
@@ -382,35 +316,66 @@ class AssistiveEnv(gym.Env):
             time.sleep(self.time_step - t)
         self.last_sim_time = time.time()
 
-    def setup_timing(self):
-        self.total_time = 0
-        self.last_sim_time = None
-        self.iteration = 0
-
-    def setup_record_video(self, task='scratch_itch_pr2'):
-        if self.record_video and self.gui:
-            if self.video_writer is not None:
-                self.video_writer.release()
-            now = datetime.datetime.now()
-            date = now.strftime('%Y-%m-%d_%H-%M-%S')
-            # self.video_writer = cv2.VideoWriter('%s_%s.avi' % (task, date), cv2.VideoWriter_fourcc(*'MJPG'), 10, (self.width, self.height))
-
-    def record_video_frame(self):
-        if self.record_video and self.gui:
-            frame = np.reshape(p.getCameraImage(width=self.width, height=self.height, renderer=p.ER_BULLET_HARDWARE_OPENGL, physicsClientId=self.id)[2], (self.height, self.width, 4))[:, :, :3]
-            # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            # self.video_writer.write(frame)
-
     def update_targets(self):
         pass
 
     def render(self, mode='human'):
         if not self.gui:
             self.gui = True
-            p.disconnect(self.id)
+            if self.id is not None:
+                self.disconnect()
+            try:
+                self.width = get_monitors()[0].width
+                self.height = get_monitors()[0].height
+            except Exception as e:
+                self.width = 1920
+                self.height = 1080
             self.id = p.connect(p.GUI, options='--background_color_red=0.8 --background_color_green=0.9 --background_color_blue=1.0 --width=%d --height=%d' % (self.width, self.height))
-
-            self.world_creation = WorldCreation(self.id, robot_type=self.robot_type, task=self.task, time_step=self.time_step, np_random=self.np_random, config=self.config)
             self.util = Util(self.id, self.np_random)
-            # print('Physics server ID:', self.id)
+
+    def get_euler(self, quaternion):
+        return np.array(p.getEulerFromQuaternion(np.array(quaternion), physicsClientId=self.id))
+
+    def get_quaternion(self, euler):
+        return np.array(p.getQuaternionFromEuler(np.array(euler), physicsClientId=self.id))
+
+    def setup_camera(self, camera_eye=[0.5, -0.75, 1.5], camera_target=[-0.2, 0, 0.75], fov=60, camera_width=1920//4, camera_height=1080//4):
+        self.camera_width = camera_width
+        self.camera_height = camera_height
+        self.view_matrix = p.computeViewMatrix(camera_eye, camera_target, [0, 0, 1], physicsClientId=self.id)
+        self.projection_matrix = p.computeProjectionMatrixFOV(fov, camera_width / camera_height, 0.01, 100, physicsClientId=self.id)
+
+    def setup_camera_rpy(self, camera_target=[-0.2, 0, 0.75], distance=1.5, rpy=[0, -35, 40], fov=60, camera_width=1920//4, camera_height=1080//4):
+        self.camera_width = camera_width
+        self.camera_height = camera_height
+        self.view_matrix = p.computeViewMatrixFromYawPitchRoll(camera_target, distance, rpy[2], rpy[1], rpy[0], 2, physicsClientId=self.id)
+        self.projection_matrix = p.computeProjectionMatrixFOV(fov, camera_width / camera_height, 0.01, 100, physicsClientId=self.id)
+
+    def get_camera_image_depth(self, light_pos=[0, -3, 1], shadow=False, ambient=0.8, diffuse=0.3, specular=0.1):
+        assert self.view_matrix is not None, 'You must call env.setup_camera() or env.setup_camera_rpy() before getting a camera image'
+        w, h, img, depth, _ = p.getCameraImage(self.camera_width, self.camera_height, self.view_matrix, self.projection_matrix, lightDirection=light_pos, shadow=shadow, lightAmbientCoeff=ambient, lightDiffuseCoeff=diffuse, lightSpecularCoeff=specular, physicsClientId=self.id)
+        img = np.reshape(img, (h, w, 4))
+        depth = np.reshape(depth, (h, w))
+        return img, depth
+
+    def create_sphere(self, radius=0.01, mass=0.0, pos=[0, 0, 0], visual=True, collision=True, rgba=[0, 1, 1, 1], maximal_coordinates=False, return_collision_visual=False):
+        sphere_collision = p.createCollisionShape(shapeType=p.GEOM_SPHERE, radius=radius, physicsClientId=self.id) if collision else -1
+        sphere_visual = p.createVisualShape(shapeType=p.GEOM_SPHERE, radius=radius, rgbaColor=rgba, physicsClientId=self.id) if visual else -1
+        if return_collision_visual:
+            return sphere_collision, sphere_visual
+        body = p.createMultiBody(baseMass=mass, baseCollisionShapeIndex=sphere_collision, baseVisualShapeIndex=sphere_visual, basePosition=pos, useMaximalCoordinates=maximal_coordinates, physicsClientId=self.id)
+        sphere = Agent()
+        sphere.init(body, self.id, self.np_random, indices=-1)
+        return sphere
+
+    def create_spheres(self, radius=0.01, mass=0.0, batch_positions=[[0, 0, 0]], visual=True, collision=True, rgba=[0, 1, 1, 1]):
+        sphere_collision = p.createCollisionShape(shapeType=p.GEOM_SPHERE, radius=radius, physicsClientId=self.id) if collision else -1
+        sphere_visual = p.createVisualShape(shapeType=p.GEOM_SPHERE, radius=radius, rgbaColor=rgba, physicsClientId=self.id) if visual else -1
+        last_sphere_id = p.createMultiBody(baseMass=mass, baseCollisionShapeIndex=sphere_collision, baseVisualShapeIndex=sphere_visual, basePosition=[0, 0, 0], useMaximalCoordinates=False, batchPositions=batch_positions, physicsClientId=self.id)
+        spheres = []
+        for body in list(range(last_sphere_id-len(batch_positions)+1, last_sphere_id+1)):
+            sphere = Agent()
+            sphere.init(body, self.id, self.np_random, indices=-1)
+            spheres.append(sphere)
+        return spheres
 

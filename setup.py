@@ -14,11 +14,17 @@ for root, dirs, files in os.walk(directory):
         data_files.append(os.path.join(root, fn))
 
 setup(name='assistive-gym',
-    version='0.100',
+    version='1.0',
     packages=find_packages(),
     python_requires='>=3',
+<<<<<<< HEAD
     install_requires=['gym>=0.2.3', 'pybullet', 'numpy', 'keras==2.3.0', 'tensorflow==1.14.0', 'h5py==2.10.0'] + ['screeninfo==0.6.1' if sys.version_info >= (3, 6) else 'screeninfo==0.2'],
     description='Physics simulation for assistive robotics and human-robot interaction.',
+=======
+    # install_requires=['gym>=0.2.3', 'pybullet', 'numpy', 'keras==2.3.0', 'tensorflow==1.14.0', 'h5py==2.10.0', 'smplx', 'trimesh'] + ['screeninfo==0.6.1' if sys.version_info >= (3, 6) else 'screeninfo==0.2'],
+    install_requires=['gym>=0.2.3', 'pybullet @ git+https://github.com/Zackory/bullet3.git#egg=pybullet', 'numpy', 'keras==2.3.0', 'tensorflow==1.14.0', 'h5py==2.10.0', 'smplx', 'trimesh', 'ray[rllib]', 'numpngw', 'pandas==0.22'] + ['screeninfo==0.6.1' if sys.version_info >= (3, 6) else 'screeninfo==0.2'],
+    # description='Physics simulation for assistive robotics and human-robot interaction.',
+>>>>>>> 828c4d66997eb88bba9862ba4b30e183bb82adff
     # long_description=long_description,
     long_description_content_type="text/markdown",
     url='https://github.com/Healthcare-Robotics/assistive-gym',
@@ -34,7 +40,6 @@ setup(name='assistive-gym',
         'Operating System :: Microsoft :: Windows', 'Operating System :: POSIX :: Linux',
         'Operating System :: MacOS', 'Intended Audience :: Science/Research',
         "Programming Language :: Python",
-        'Programming Language :: Python :: 3.4', 'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6', 'Topic :: Games/Entertainment :: Simulation',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
         'Framework :: Robot Framework'

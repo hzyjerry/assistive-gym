@@ -1,49 +1,52 @@
-import os
-from gym import spaces
+import os, time
 import numpy as np
 import pybullet as p
 
 from .env import AssistiveEnv
 
 class DressingEnv(AssistiveEnv):
-    def __init__(self, robot_type='pr2', human_control=False):
-        super(DressingEnv, self).__init__(robot_type=robot_type, task='dressing', human_control=human_control, frame_skip=10, time_step=0.01, action_robot_len=7, action_human_len=(10 if human_control else 0), obs_robot_len=24, obs_human_len=(28 if human_control else 0))
+    def __init__(self, robot, human):
+        super(DressingEnv, self).__init__(robot=robot, human=human, task='dressing', obs_robot_len=(17 + len(robot.controllable_joint_indices) - (len(robot.wheel_joint_indices) if robot.mobile else 0)), obs_human_len=(18 + len(human.controllable_joint_indices)))
+        # self.tt = None
 
     def step(self, action):
-        self.take_step(action, robot_arm='left', gains=self.config('robot_gains'), forces=self.config('robot_forces'), human_gains=0.0025, step_sim=False)
+        # if self.tt is not None:
+        #     print('Time per iteration:', time.time() - self.tt)
+        # self.tt = time.time()
+        if self.human.controllable:
+            action = np.concatenate([action['robot'], action['human']])
+        self.take_step(action)
 
-        # Update robot position
-        forces_torques = []
-        for _ in range(self.frame_skip):
-            # Force the cloth attachment to stay at the end effector
-            state = p.getLinkState(self.robot, 76 if self.robot_type=='pr2' else 19 if self.robot_type=='sawyer' else 48 if self.robot_type=='baxter' else 8, computeForwardKinematics=True, physicsClientId=self.id)
-            p.resetBasePositionAndOrientation(self.cloth_attachment, np.array(state[0]), [0, 0, 0, 1], physicsClientId=self.id)
-            p.stepSimulation(physicsClientId=self.id)
-        self.record_video_frame()
+        shoulder_pos = self.human.get_pos_orient(self.human.left_shoulder)[0]
+        elbow_pos = self.human.get_pos_orient(self.human.left_elbow)[0]
+        wrist_pos = self.human.get_pos_orient(self.human.left_wrist)[0]
 
+        # Get cloth data
         x, y, z, cx, cy, cz, fx, fy, fz = p.getSoftBodyData(self.cloth, physicsClientId=self.id)
         mesh_points = np.concatenate([np.expand_dims(x, axis=-1), np.expand_dims(y, axis=-1), np.expand_dims(z, axis=-1)], axis=-1)
+        # Get 3D points for two triangles around the sleeve to detect if the sleeve is around the arm
         triangle1_points = mesh_points[self.triangle1_point_indices]
         triangle2_points = mesh_points[self.triangle2_point_indices]
-        forearm_in_sleeve, upperarm_in_sleeve, distance_along_forearm, distance_along_upperarm, distance_to_hand, distance_to_elbow, distance_to_shoulder, forearm_length, upperarm_length = self.util.sleeve_on_arm_reward(triangle1_points, triangle2_points, self.human, self.world_creation.human_creation.hand_radius, self.world_creation.human_creation.elbow_radius, self.world_creation.human_creation.shoulder_radius)
-        if forearm_in_sleeve and not self.forearm_in_sleeve:
-            self.forearm_in_sleeve = True
-        if upperarm_in_sleeve and not self.upperarm_in_sleeve:
-            self.upperarm_in_sleeve = True
+        forearm_in_sleeve, upperarm_in_sleeve, distance_along_forearm, distance_along_upperarm, distance_to_hand, distance_to_elbow, distance_to_shoulder, forearm_length, upperarm_length = self.util.sleeve_on_arm_reward(triangle1_points, triangle2_points, shoulder_pos, elbow_pos, wrist_pos, self.human.hand_radius, self.human.elbow_radius, self.human.shoulder_radius)
+        self.forearm_in_sleeve = forearm_in_sleeve
+        self.upperarm_in_sleeve = upperarm_in_sleeve
 
+        # Get human preferences, exclude cloth forces due to collision with the end effector
         forces = np.concatenate([np.expand_dims(fx, axis=-1), np.expand_dims(fy, axis=-1), np.expand_dims(fz, axis=-1)], axis=-1) * 10
         contact_positions = np.concatenate([np.expand_dims(cx, axis=-1), np.expand_dims(cy, axis=-1), np.expand_dims(cz, axis=-1)], axis=-1)
+        end_effector_pos = self.robot.get_pos_orient(self.robot.left_end_effector)[0]
         forces_temp = []
         contact_positions_temp = []
         for f, c in zip(forces, contact_positions):
-            if c[-1] < 1.1 and np.linalg.norm(f) < 20:
+            if c[-1] < end_effector_pos[-1] - 0.05 and np.linalg.norm(f) < 20:
                 forces_temp.append(f)
                 contact_positions_temp.append(c)
-        forces = np.array(forces_temp)
+        self.cloth_forces = np.array(forces_temp)
         contact_positions = np.array(contact_positions_temp)
-        end_effector_velocity = np.linalg.norm(p.getLinkState(self.robot, 76 if self.robot_type=='pr2' else 19 if self.robot_type=='sawyer' else 48 if self.robot_type=='baxter' else 8, computeForwardKinematics=True, computeLinkVelocity=True, physicsClientId=self.id)[6])
+        end_effector_velocity = np.linalg.norm(self.robot.get_velocity(self.robot.left_end_effector))
+        preferences_score = self.human_preferences(end_effector_velocity=end_effector_velocity, dressing_forces=self.cloth_forces)
 
-        reward_action = -np.sum(np.square(action)) # Penalize actions
+        reward_action = -np.linalg.norm(action) # Penalize actions
         if self.upperarm_in_sleeve:
             reward_dressing = forearm_length
             if distance_along_upperarm < upperarm_length:
@@ -52,125 +55,107 @@ class DressingEnv(AssistiveEnv):
             reward_dressing = distance_along_forearm
         else:
             reward_dressing = -distance_to_hand
-        # Get human preferences
-        preferences_score = self.human_preferences(end_effector_velocity=end_effector_velocity, dressing_forces=forces)
-
-        end_effector_pos = np.array(p.getLinkState(self.robot, 76 if self.robot_type=='pr2' else 19 if self.robot_type=='sawyer' else 48 if self.robot_type=='baxter' else 8, computeForwardKinematics=True, physicsClientId=self.id)[0])
-        shoulder_pos = np.array(p.getLinkState(self.human, 15, computeForwardKinematics=True, physicsClientId=self.id)[0])
-        elbow_pos, elbow_orient = p.getLinkState(self.human, 17, computeForwardKinematics=True, physicsClientId=self.id)[:2]
 
         reward = self.config('dressing_reward_weight')*reward_dressing + self.config('action_weight')*reward_action + preferences_score
 
-        cloth_force_sum = np.sum(np.linalg.norm(forces, axis=-1))
-        ft = [cloth_force_sum]
-        robot_force_on_human = 0
-        for c in p.getContactPoints(bodyA=self.robot, bodyB=self.human, physicsClientId=self.id):
-            robot_force_on_human += c[9]
-        obs = self._get_obs(ft, [cloth_force_sum, robot_force_on_human])
+        obs = self._get_obs()
 
         if reward_dressing > self.task_success:
             self.task_success = reward_dressing
 
         if self.gui:
-            print('Task success:', self.task_success, 'Average forces on arm:', cloth_force_sum)
+            print('Task success:', self.task_success, 'Average forces on arm:', self.cloth_force_sum)
 
-        total_force_on_human = robot_force_on_human + cloth_force_sum
-        info = {'total_force_on_human': total_force_on_human, 'task_success': int(self.task_success >= self.config('task_success_threshold')), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
-        done = False
+        info = {'total_force_on_human': self.total_force_on_human, 'task_success': int(self.task_success >= self.config('task_success_threshold')), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
+        done = self.iteration >= 200
 
-        return obs, reward, done, info
-
-    def _get_obs(self, forces, forces_human):
-        torso_pos = np.array(p.getLinkState(self.robot, 15 if self.robot_type == 'pr2' else 0, computeForwardKinematics=True, physicsClientId=self.id)[0])
-        state = p.getLinkState(self.robot, 76 if self.robot_type=='pr2' else 19 if self.robot_type=='sawyer' else 48 if self.robot_type=='baxter' else 8, computeForwardKinematics=True, physicsClientId=self.id)
-        tool_pos = np.array(state[0])
-        tool_orient = np.array(state[1]) # Quaternions
-        robot_joint_states = p.getJointStates(self.robot, jointIndices=self.robot_left_arm_joint_indices, physicsClientId=self.id)
-        robot_joint_positions = np.array([x[0] for x in robot_joint_states])
-        robot_pos, robot_orient = p.getBasePositionAndOrientation(self.robot, physicsClientId=self.id)
-        if self.human_control:
-            human_pos = np.array(p.getBasePositionAndOrientation(self.human, physicsClientId=self.id)[0])
-            human_joint_states = p.getJointStates(self.human, jointIndices=self.human_controllable_joint_indices, physicsClientId=self.id)
-            human_joint_positions = np.array([x[0] for x in human_joint_states])
-
-        # Human shoulder, elbow, and wrist joint locations
-        shoulder_pos, shoulder_orient = p.getLinkState(self.human, 15, computeForwardKinematics=True, physicsClientId=self.id)[:2]
-        elbow_pos, elbow_orient = p.getLinkState(self.human, 17, computeForwardKinematics=True, physicsClientId=self.id)[:2]
-        wrist_pos, wrist_orient = p.getLinkState(self.human, 19, computeForwardKinematics=True, physicsClientId=self.id)[:2]
-
-        robot_obs = np.concatenate([tool_pos-torso_pos, tool_orient, robot_joint_positions, shoulder_pos-torso_pos, elbow_pos-torso_pos, wrist_pos-torso_pos, forces]).ravel()
-        if self.human_control:
-            human_obs = np.concatenate([tool_pos-human_pos, tool_orient, human_joint_positions, shoulder_pos-human_pos, elbow_pos-human_pos, wrist_pos-human_pos, forces_human]).ravel()
+        if not self.human.controllable:
+            return obs, reward, done, info
         else:
-            human_obs = []
+            # Co-optimization with both human and robot controllable
+            return obs, {'robot': reward, 'human': reward}, {'robot': done, 'human': done, '__all__': done}, {'robot': info, 'human': info}
 
-        return np.concatenate([robot_obs, human_obs]).ravel()
+    def _get_obs(self, agent=None):
+        end_effector_pos, end_effector_orient = self.robot.get_pos_orient(self.robot.left_end_effector)
+        end_effector_pos_real, end_effector_orient_real = self.robot.convert_to_realworld(end_effector_pos, end_effector_orient)
+        robot_joint_angles = self.robot.get_joint_angles(self.robot.controllable_joint_indices)
+        # Fix joint angles to be in [-pi, pi]
+        robot_joint_angles = (np.array(robot_joint_angles) + np.pi) % (2*np.pi) - np.pi
+        if self.robot.mobile:
+            # Don't include joint angles for the wheels
+            robot_joint_angles = robot_joint_angles[len(self.robot.wheel_joint_indices):]
+        shoulder_pos = self.human.get_pos_orient(self.human.left_shoulder)[0]
+        elbow_pos = self.human.get_pos_orient(self.human.left_elbow)[0]
+        wrist_pos = self.human.get_pos_orient(self.human.left_wrist)[0]
+        shoulder_pos_real, _ = self.robot.convert_to_realworld(shoulder_pos)
+        elbow_pos_real, _ = self.robot.convert_to_realworld(elbow_pos)
+        wrist_pos_real, _ = self.robot.convert_to_realworld(wrist_pos)
+        self.cloth_force_sum = np.sum(np.linalg.norm(self.cloth_forces, axis=-1))
+        self.robot_force_on_human = np.sum(self.robot.get_contact_points(self.human)[-1])
+        self.total_force_on_human = self.robot_force_on_human + self.cloth_force_sum
+        robot_obs = np.concatenate([end_effector_pos_real, end_effector_orient_real, robot_joint_angles, shoulder_pos_real, elbow_pos_real, wrist_pos_real, [self.cloth_force_sum]]).ravel()
+        if agent == 'robot':
+            return robot_obs
+        if self.human.controllable:
+            human_joint_angles = self.human.get_joint_angles(self.human.controllable_joint_indices)
+            end_effector_pos_human, end_effector_orient_human = self.human.convert_to_realworld(end_effector_pos, end_effector_orient)
+            shoulder_pos_human, _ = self.human.convert_to_realworld(shoulder_pos)
+            elbow_pos_human, _ = self.human.convert_to_realworld(elbow_pos)
+            wrist_pos_human, _ = self.human.convert_to_realworld(wrist_pos)
+            human_obs = np.concatenate([end_effector_pos_human, end_effector_orient_human, human_joint_angles, shoulder_pos_human, elbow_pos_human, wrist_pos_human, [self.cloth_force_sum, self.robot_force_on_human]]).ravel()
+            if agent == 'human':
+                return human_obs
+            # Co-optimization with both human and robot controllable
+            return {'robot': robot_obs, 'human': human_obs}
+        return robot_obs
 
     def reset(self):
-        self.setup_timing()
-        self.task_success = 0
-        self.forearm_in_sleeve = False
-        self.upperarm_in_sleeve = False
-        self.human, self.wheelchair, self.robot, self.robot_lower_limits, self.robot_upper_limits, self.human_lower_limits, self.human_upper_limits, self.robot_right_arm_joint_indices, self.robot_left_arm_joint_indices, self.gender = self.world_creation.create_new_world(furniture_type='wheelchair', static_human_base=True, human_impairment='random', print_joints=False, gender='random')
-        self.robot_lower_limits = self.robot_lower_limits[self.robot_left_arm_joint_indices]
-        self.robot_upper_limits = self.robot_upper_limits[self.robot_left_arm_joint_indices]
-        self.reset_robot_joints()
-        if self.robot_type == 'jaco':
-            wheelchair_pos, wheelchair_orient = p.getBasePositionAndOrientation(self.wheelchair, physicsClientId=self.id)
-            p.resetBasePositionAndOrientation(self.robot, np.array(wheelchair_pos) + np.array([0.35, -0.3, 0.3]), p.getQuaternionFromEuler([0, 0, 0], physicsClientId=self.id), physicsClientId=self.id)
+        super(DressingEnv, self).reset()
+        self.build_assistive_env('wheelchair_left')
+        self.cloth_forces = np.zeros((1, 1))
+        if self.robot.wheelchair_mounted:
+            wheelchair_pos, wheelchair_orient = self.furniture.get_base_pos_orient()
+            self.robot.set_base_pos_orient(wheelchair_pos + np.array(self.robot.toc_base_pos_offset[self.task]), [0, 0, np.pi/2.0])
 
-        joints_positions = [(6, np.deg2rad(-90)), (13, np.deg2rad(-80)), (16, np.deg2rad(-90)), (28, np.deg2rad(-90)), (31, np.deg2rad(80)), (35, np.deg2rad(-90)), (38, np.deg2rad(80))]
-        self.human_controllable_joint_indices = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
-        self.world_creation.setup_human_joints(self.human, joints_positions, self.human_controllable_joint_indices if (self.human_control or self.world_creation.human_impairment == 'tremor') else [], use_static_joints=True, human_reactive_force=None)
-        p.resetBasePositionAndOrientation(self.human, [0, 0.03, 0.89 if self.gender == 'male' else 0.86], [0, 0, 0, 1], physicsClientId=self.id)
-        human_joint_states = p.getJointStates(self.human, jointIndices=self.human_controllable_joint_indices, physicsClientId=self.id)
-        self.target_human_joint_positions = np.array([x[0] for x in human_joint_states])
-        self.human_lower_limits = self.human_lower_limits[self.human_controllable_joint_indices]
-        self.human_upper_limits = self.human_upper_limits[self.human_controllable_joint_indices]
+        # Update robot and human motor gains
+        self.robot.motor_gains = self.human.motor_gains = 0.01
 
-        shoulder_pos, shoulder_orient = p.getLinkState(self.human, 15, computeForwardKinematics=True, physicsClientId=self.id)[:2]
-        elbow_pos, elbow_orient = p.getLinkState(self.human, 17, computeForwardKinematics=True, physicsClientId=self.id)[:2]
-        wrist_pos, wrist_orient = p.getLinkState(self.human, 19, computeForwardKinematics=True, physicsClientId=self.id)[:2]
+        joints_positions = [(self.human.j_right_elbow, -90), (self.human.j_left_shoulder_x, -45), (self.human.j_left_elbow, -90), (self.human.j_right_hip_x, -90), (self.human.j_right_knee, 80), (self.human.j_left_hip_x, -90), (self.human.j_left_knee, 80)]
+        self.human.setup_joints(joints_positions, use_static_joints=True, reactive_force=None if self.human.controllable else 1, reactive_gain=0.01)
 
-        target_pos = np.array([-0.85, -0.4, 0]) + np.array([1.85, 0.6, 0]) + np.array([-0.55, -0.5, 1.2]) + self.np_random.uniform(-0.05, 0.05, size=3)
+        shoulder_pos = self.human.get_pos_orient(self.human.left_shoulder)[0]
+        elbow_pos = self.human.get_pos_orient(self.human.left_elbow)[0]
+        wrist_pos = self.human.get_pos_orient(self.human.left_wrist)[0]
+
+        target_ee_pos = np.array([0.45, -0.3, 1]) + self.np_random.uniform(-0.05, 0.05, size=3)
+        target_ee_orient = self.get_quaternion(self.robot.toc_ee_orient_rpy[self.task][0])
+        target_ee_orient_shoulder = self.get_quaternion(self.robot.toc_ee_orient_rpy[self.task][-1])
         offset = np.array([0, 0, 0.1])
-        if self.robot_type == 'pr2':
-            target_orient = p.getQuaternionFromEuler([0, 0, np.pi], physicsClientId=self.id)
-            target_orient_shoulder = p.getQuaternionFromEuler([0, 0, np.pi*3/2.0], physicsClientId=self.id)
-            self.position_robot_toc(self.robot, 76, [(target_pos, target_orient)], [(shoulder_pos+offset, target_orient_shoulder), (elbow_pos+offset, target_orient), (wrist_pos+offset, target_orient)], self.robot_left_arm_joint_indices, self.robot_lower_limits, self.robot_upper_limits, ik_indices=range(29, 29+7), pos_offset=np.array([1.7, 0.7, 0]), base_euler_orient=[0, 0, np.pi], right_side=False, max_ik_iterations=200, step_sim=True, check_env_collisions=False, human_joint_indices=self.human_controllable_joint_indices, human_joint_positions=self.target_human_joint_positions)
-        elif self.robot_type == 'jaco':
-            target_orient = p.getQuaternionFromEuler(np.array([0, -np.pi/2.0, 0]), physicsClientId=self.id)
-            target_joint_positions = self.util.ik_random_restarts(self.robot, 8, target_pos, target_orient, self.world_creation, self.robot_left_arm_joint_indices, self.robot_lower_limits, self.robot_upper_limits, ik_indices=[0, 1, 2, 3, 4, 5, 6], max_iterations=1000, max_ik_random_restarts=40, random_restart_threshold=0.03, step_sim=True)
-            self.world_creation.set_gripper_open_position(self.robot, position=1.33, left=False, set_instantly=True)
-        else:
-            target_orient = p.getQuaternionFromEuler([0, -np.pi/2.0, 0], physicsClientId=self.id)
-            target_orient_shoulder = p.getQuaternionFromEuler([np.pi/2.0, -np.pi/2.0, 0], physicsClientId=self.id)
-            if self.robot_type == 'baxter':
-                self.position_robot_toc(self.robot, 48, [(target_pos, target_orient)], [(shoulder_pos+offset, target_orient_shoulder), (elbow_pos+offset, target_orient), (wrist_pos+offset, target_orient)], self.robot_left_arm_joint_indices, self.robot_lower_limits, self.robot_upper_limits, ik_indices=range(10, 17), pos_offset=np.array([1.7, 0.7, 0.975]), base_euler_orient=[0, 0, np.pi], right_side=False, max_ik_iterations=200, step_sim=True, check_env_collisions=False, human_joint_indices=self.human_controllable_joint_indices, human_joint_positions=self.target_human_joint_positions)
-            else:
-                self.position_robot_toc(self.robot, 19, [(target_pos, target_orient)], [(shoulder_pos+offset, target_orient_shoulder), (elbow_pos+offset, target_orient), (wrist_pos+offset, target_orient)], self.robot_left_arm_joint_indices, self.robot_lower_limits, self.robot_upper_limits, ik_indices=[0, 2, 3, 4, 5, 6, 7], pos_offset=np.array([1.8, 0.7, 0.975]), base_euler_orient=[0, 0, np.pi], right_side=False, max_ik_iterations=200, step_sim=True, check_env_collisions=False, human_joint_indices=self.human_controllable_joint_indices, human_joint_positions=self.target_human_joint_positions)
-        if self.human_control or self.world_creation.human_impairment == 'tremor':
-            human_len = len(self.human_controllable_joint_indices)
-            human_joint_states = p.getJointStates(self.human, jointIndices=self.human_controllable_joint_indices, physicsClientId=self.id)
-            human_joint_positions = np.array([x[0] for x in human_joint_states])
-            p.setJointMotorControlArray(self.human, jointIndices=self.human_controllable_joint_indices, controlMode=p.POSITION_CONTROL, targetPositions=human_joint_positions, positionGains=np.array([0.005]*human_len), forces=[1]*human_len, physicsClientId=self.id)
+        self.init_robot_pose(target_ee_pos, target_ee_orient, [(target_ee_pos, target_ee_orient)], [(shoulder_pos+offset, target_ee_orient_shoulder), (elbow_pos+offset, target_ee_orient), (wrist_pos+offset, target_ee_orient)], arm='left', tools=[], collision_objects=[self.human, self.furniture], right_side=False)
+        if self.robot.mobile:
+            # Change robot gains since we use numSubSteps=8
+            self.robot.gains = list(np.array(self.robot.gains) / 8.0)
 
-        state = p.getLinkState(self.robot, 76 if self.robot_type=='pr2' else 19 if self.robot_type=='sawyer' else 48 if self.robot_type=='baxter' else 8, computeForwardKinematics=True, physicsClientId=self.id)
-        self.start_ee_pos = np.array(state[0])
-        self.start_ee_orient = np.array(state[1]) # Quaternions
+        # Open gripper to hold the tool
+        self.robot.set_gripper_open_position(self.robot.left_gripper_indices, self.robot.gripper_pos[self.task], set_instantly=True)
+
+        if self.human.controllable or self.human.impairment == 'tremor':
+            # Ensure the human arm remains stable while loading the cloth
+            self.human.control(self.human.controllable_joint_indices, self.human.get_joint_angles(self.human.controllable_joint_indices), 0.05, 1)
+
+        self.start_ee_pos, self.start_ee_orient = self.robot.get_pos_orient(self.robot.left_end_effector)
         self.cloth_orig_pos = np.array([0.34658437, -0.30296362, 1.20023387])
         self.cloth_offset = self.start_ee_pos - self.cloth_orig_pos
 
-        # Set up gripper - cloth constraint
-        gripper_visual = p.createVisualShape(p.GEOM_SPHERE, radius=0.01, rgbaColor=[0, 0, 0, 0], physicsClientId=self.id)
-        gripper_collision = p.createCollisionShape(p.GEOM_SPHERE, radius=0.0001, physicsClientId=self.id)
-        self.cloth_attachment = p.createMultiBody(baseMass=0, baseVisualShapeIndex=gripper_visual, baseCollisionShapeIndex=gripper_collision, basePosition=self.start_ee_pos, useMaximalCoordinates=1, physicsClientId=self.id)
+        self.cloth_attachment = self.create_sphere(radius=0.0001, mass=0, pos=self.start_ee_pos, visual=True, collision=False, rgba=[0, 0, 0, 0], maximal_coordinates=True)
 
         # Load cloth
-        self.cloth = p.loadCloth(os.path.join(self.world_creation.directory, 'clothing', 'hospitalgown_reduced.obj'), scale=1.4, mass=0.23, position=np.array([0.02, -0.38, 0.83]) + self.cloth_offset/1.4, orientation=p.getQuaternionFromEuler([0, 0, np.pi], physicsClientId=self.id), bodyAnchorId=self.cloth_attachment, anchors=[2087, 3879, 3681, 3682, 2086, 2041, 987, 2042, 2088, 1647, 2332], collisionMargin=0.04, rgbaColor=np.array([139./256., 195./256., 74./256., 0.6]), rgbaLineColor=np.array([197./256., 225./256., 165./256., 1]), physicsClientId=self.id)
-        p.clothParams(self.cloth, kLST=0.05, kAST=1.0, kVST=1.0, kDP=0.001, kDG=10, kDF=0.25, kCHR=1.0, kKHR=1.0, kAHR=0.5, piterations=5, physicsClientId=self.id)
-        self.triangle1_point_indices = [621, 37, 1008]
-        self.triangle2_point_indices = [130, 3908, 2358]
+        self.cloth = p.loadCloth(os.path.join(self.directory, 'clothing', 'hospitalgown_reduced.obj'), scale=1.4, mass=0.16, position=np.array([0.02, -0.38, 0.84]) + self.cloth_offset/1.4, orientation=self.get_quaternion([0, 0, np.pi]), bodyAnchorId=self.cloth_attachment.body, anchors=[2086, 2087, 2088, 2041], collisionMargin=0.04, rgbaColor=np.array([139./256., 195./256., 74./256., 0.6]), rgbaLineColor=np.array([197./256., 225./256., 165./256., 1]), physicsClientId=self.id)
+        p.clothParams(self.cloth, kLST=0.055, kAST=1.0, kVST=0.5, kDP=0.01, kDG=10, kDF=0.39, kCHR=1.0, kKHR=1.0, kAHR=1.0, piterations=5, physicsClientId=self.id)
+        # Points along the opening of the left arm sleeve
+        self.triangle1_point_indices = [1180, 2819, 30]
+        self.triangle2_point_indices = [1322, 13, 696]
+
         # double m_kLST;       // Material: Linear stiffness coefficient [0,1]
         # double m_kAST;       // Material: Area/Angular stiffness coefficient [0,1]
         # double m_kVST;       // Material: Volume stiffness coefficient [0,1]
@@ -191,22 +176,36 @@ class DressingEnv(AssistiveEnv):
         # int m_diterations;   // Drift solver iterations
 
         p.setGravity(0, 0, -9.81/2, physicsClientId=self.id) # Let the cloth settle more gently
-        p.setGravity(0, 0, 0, body=self.robot, physicsClientId=self.id)
-        p.setGravity(0, 0, -1, body=self.human, physicsClientId=self.id)
-        p.setGravity(0, 0, 0, body=self.cloth_attachment, physicsClientId=self.id)
+        if not self.robot.mobile:
+            self.robot.set_gravity(0, 0, 0)
+        self.human.set_gravity(0, 0, -1)
+        self.cloth_attachment.set_gravity(0, 0, 0)
 
-        p.setPhysicsEngineParameter(numSubSteps=4, physicsClientId=self.id)
+        p.setPhysicsEngineParameter(numSubSteps=8, physicsClientId=self.id)
 
         # Enable rendering
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.id)
 
         # Wait for the cloth to settle
-        for _ in range(200):
-            # Force the cloth attachment to stay at the end effector
-            p.resetBasePositionAndOrientation(self.cloth_attachment, self.start_ee_pos, [0, 0, 0, 1], physicsClientId=self.id)
+        for _ in range(50):
+            # Force the end effector attachment to stay at the end effector
+            self.cloth_attachment.set_base_pos_orient(self.start_ee_pos, [0, 0, 0, 1])
             p.stepSimulation(physicsClientId=self.id)
 
         p.setGravity(0, 0, -9.81, physicsClientId=self.id)
 
-        return self._get_obs([0], [0, 0])
+        self.init_env_variables()
+        return self._get_obs()
+
+    def update_targets(self):
+        # Force the end effector to move forward
+        # action = np.array([0, 0.025, 0]) / 10.0
+        # ee_pos = self.robot.get_pos_orient(self.robot.left_end_effector)[0] + action
+        # ee_pos[-1] = self.start_ee_pos[-1]
+        # ik_joint_poses = np.array(p.calculateInverseKinematics(self.robot.body, self.robot.left_end_effector, targetPosition=ee_pos, targetOrientation=self.start_ee_orient, maxNumIterations=100, physicsClientId=self.id))
+        # target_joint_positions = ik_joint_poses[self.robot.left_arm_ik_indices]
+        # self.robot.set_joint_angles(self.robot.left_arm_joint_indices, target_joint_positions, use_limits=False)
+
+        # Force the end effector attachment to stay at the end effector
+        self.cloth_attachment.set_base_pos_orient(self.robot.get_pos_orient(self.robot.left_end_effector)[0], [0, 0, 0, 1])
 
