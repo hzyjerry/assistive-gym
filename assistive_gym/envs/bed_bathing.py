@@ -3,16 +3,22 @@ import pybullet as p
 
 from .env import AssistiveEnv
 from .agents import furniture
+from .agents.agent_pose_control import HumanPoseControl, RobotPoseControl
 from .agents.furniture import Furniture
 
 class BedBathingEnv(AssistiveEnv):
     def __init__(self, robot, human):
-        super(BedBathingEnv, self).__init__(robot=robot, human=human, task='bed_bathing', obs_robot_len=(17 + len(robot.controllable_joint_indices) - (len(robot.wheel_joint_indices) if robot.mobile else 0)), obs_human_len=(18 + len(human.controllable_joint_indices)))
+        super(BedBathingEnv, self).__init__(robot=robot, human=human, task='bed_bathing', obs_robot_len=(17 + len(robot.controllable_joint_indices) - (len(robot.wheel_joint_indices) if robot.mobile else 0)), obs_human_len=(18 + len(human.controllable_joint_indices)), frame_skip=1)
 
     def step(self, action):
-        if self.human.controllable:
+        if self.human.controllable and self.robot.controllable:
             action = np.concatenate([action['robot'], action['human']])
         self.take_step(action)
+
+        if isinstance(self.human, HumanPoseControl):
+            self.human.control()
+        elif isinstance(self.robot, RobotPoseControl):
+            self.robot.control()
 
         obs = self._get_obs()
 
@@ -32,7 +38,7 @@ class BedBathingEnv(AssistiveEnv):
         info = {'total_force_on_human': self.total_force_on_human, 'task_success': int(self.task_success >= (self.total_target_count*self.config('task_success_threshold'))), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
         done = self.iteration >= 200
 
-        if not self.human.controllable:
+        if not (self.human.controllable and self.robot.controllable):
             return obs, reward, done, info
         else:
             # Co-optimization with both human and robot controllable
@@ -105,8 +111,12 @@ class BedBathingEnv(AssistiveEnv):
             human_obs = np.concatenate([tool_pos_human, tool_orient_human, human_joint_angles, shoulder_pos_human, elbow_pos_human, wrist_pos_human, [self.total_force_on_human, self.tool_force_on_human]]).ravel()
             if agent == 'human':
                 return human_obs
-            # Co-optimization with both human and robot controllable
-            return {'robot': robot_obs, 'human': human_obs}
+
+            if self.robot.controllable:
+                # Co-optimization with both human and robot controllable
+                return {'robot': robot_obs, 'human': human_obs}
+            else:
+                return human_obs
         return robot_obs
 
     def reset(self):
@@ -168,6 +178,13 @@ class BedBathingEnv(AssistiveEnv):
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.id)
 
         self.init_env_variables()
+
+        if isinstance(self.robot, RobotPoseControl):
+            self.robot.reset()
+
+        if isinstance(self.human, HumanPoseControl):
+            self.human.reset()
+
         return self._get_obs()
 
     def generate_targets(self):

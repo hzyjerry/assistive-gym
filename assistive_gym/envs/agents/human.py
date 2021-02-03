@@ -64,7 +64,7 @@ class Human(Agent):
         self.motor_forces = 1.0
         self.motor_gains = 0.05
 
-    def init(self, human_creation, limits_model, static_human_base, impairment, gender, config, id, np_random, mass=None, radius_scale=1.0, height_scale=1.0):
+    def init(self, human_creation, limits_model, static_human_base, impairment, gender, config, id, np_random, mass=None, radius_scale=1.0, height_scale=1.0, pose_control_type=None):
         self.limits_model = limits_model
         self.arm_previous_valid_pose = {True: None, False: None}
         # Choose gender
@@ -145,4 +145,5 @@ class Human(Agent):
         elif result == 0 and self.arm_previous_valid_pose[right] is not None:
             # The person is in an invalid pose. Move joint angles back to the most recent valid pose.
             self.set_joint_angles(indices, self.arm_previous_valid_pose[right])
+
 

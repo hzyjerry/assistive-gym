@@ -78,7 +78,7 @@ class HumanMesh(Agent):
         self.right_arm_vertex_indices = None
         self.bottom_index = 5574
 
-    def create_smplx_body(self, directory, id, np_random, gender='female', height=None, body_shape=None, joint_angles=[], position=[0, 0, 0], orientation=[0, 0, 0], body_pose=None):
+    def create_smplx_body(self, directory, id, np_random, gender='female', height=None, body_shape=None, joint_angles=[], position=[0, 0, 0], orientation=[0, 0, 0], body_pose=None, save_name=None):
         # Choose gender
         self.gender = gender
         if self.gender not in ['male', 'female']:
@@ -137,13 +137,20 @@ class HumanMesh(Agent):
         # out_mesh.apply_transform(scale)
         # rot = trimesh.transformations.rotation_matrix(np.deg2rad(90), [1, 0, 0])
         # out_mesh.apply_transform(rot)
+        if save_name is not None:
+            if save_name.endswith(".ply"):
+                trimesh.exchange.export.export_mesh(out_mesh, save_name)
+            elif save_name.endswith(".xyz"):
+                with open(save_name, "w+") as f:
+                    for xyz, norm in zip(out_mesh.vertices, out_mesh.vertex_normals):
+                        f.write(f"{xyz[0]:.06f} {xyz[1]:.06f} {xyz[2]:.06f} {norm[0]:.06f} {norm[1]:.06f} {norm[2]:.06f}\n")
 
         return out_mesh, vertices, joints
 
-    def init(self, directory, id, np_random, gender='female', height=None, body_shape=None, joint_angles=[], position=[0, 0, 0], orientation=[0, 0, 0], skin_color='random', specular_color=[0.1, 0.1, 0.1], body_pose=None, out_mesh=None, vertices=None, joints=None):
+    def init(self, directory, id, np_random, gender='female', height=None, body_shape=None, joint_angles=[], position=[0, 0, 0], orientation=[0, 0, 0], skin_color='random', specular_color=[0.1, 0.1, 0.1], body_pose=None, out_mesh=None, vertices=None, joints=None, save_name=None):
         if out_mesh is None:
             # Create mesh
-            out_mesh, vertices, joints = self.create_smplx_body(directory, id, np_random, gender, height, body_shape, joint_angles, position, orientation, body_pose)
+            out_mesh, vertices, joints = self.create_smplx_body(directory, id, np_random, gender, height, body_shape, joint_angles, position, orientation, body_pose, save_name=save_name)
 
         model_folder = os.path.join(directory, 'smpl_models')
         self.skin_color = skin_color

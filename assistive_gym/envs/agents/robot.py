@@ -3,7 +3,9 @@ import pybullet as p
 from .agent import Agent
 
 class Robot(Agent):
-    def __init__(self, controllable_joints, right_arm_joint_indices, left_arm_joint_indices, wheel_joint_indices, right_end_effector, left_end_effector, right_gripper_indices, left_gripper_indices, gripper_pos, right_tool_joint, left_tool_joint, tool_pos_offset, tool_orient_offset, right_gripper_collision_indices, left_gripper_collision_indices, toc_base_pos_offset, toc_ee_orient_rpy, wheelchair_mounted, half_range=False, controllable_joint_indices=None, action_duplication=None, action_multiplier=1, flags=None):
+    def __init__(self, controllable_joints, right_arm_joint_indices, left_arm_joint_indices, wheel_joint_indices, right_end_effector, left_end_effector, right_gripper_indices, left_gripper_indices, gripper_pos, right_tool_joint, left_tool_joint, tool_pos_offset, tool_orient_offset, right_gripper_collision_indices, left_gripper_collision_indices, toc_base_pos_offset, toc_ee_orient_rpy, wheelchair_mounted, half_range=False, controllable_joint_indices=None, action_duplication=None, action_multiplier=1, flags=None, controllable=True):
+
+        self.controllable = controllable
         self.controllable_joints = controllable_joints if controllable_joint_indices is None else ''
         self.right_arm_joint_indices = right_arm_joint_indices # Controllable arm joints
         self.left_arm_joint_indices = left_arm_joint_indices # Controllable arm joints

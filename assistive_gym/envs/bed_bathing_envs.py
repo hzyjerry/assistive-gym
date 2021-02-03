@@ -7,6 +7,8 @@ from .agents.jaco import Jaco
 from .agents.stretch import Stretch
 from .agents.panda import Panda
 from .agents.human import Human
+from .agents.agent_pose_control import HumanPoseControl, JacoPoseControl
+
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from ray.tune.registry import register_env
 
@@ -27,6 +29,17 @@ class BedBathingSawyerEnv(BedBathingEnv):
 class BedBathingJacoEnv(BedBathingEnv):
     def __init__(self):
         super(BedBathingJacoEnv, self).__init__(robot=Jaco(robot_arm), human=Human(human_controllable_joint_indices, controllable=False))
+
+class BedBathingJacoHumanPoseEnv(BedBathingEnv):
+    """Human using pose controller, train robot."""
+    def __init__(self, control_type=None):
+        super(BedBathingJacoHumanPoseEnv, self).__init__(robot=Jaco(robot_arm), human=HumanPoseControl(human_controllable_joint_indices, program_type=0, pose_file="poses/bed_bathing_human_poses.yaml", control_type=control_type))
+
+class BedBathingJacoRobotPoseEnv(BedBathingEnv):
+    """Robot using pose controller, train human."""
+    def __init__(self, control_type=None):
+        super(BedBathingJacoRobotPoseEnv, self).__init__(robot=JacoPoseControl(robot_arm, program_type=0, pose_file="poses/bed_bathing_jaco_poses.yaml", control_type=control_type), human=Human(human_controllable_joint_indices, controllable=True))
+
 
 class BedBathingStretchEnv(BedBathingEnv):
     def __init__(self):

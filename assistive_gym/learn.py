@@ -6,6 +6,17 @@ from ray.tune.logger import pretty_print
 from numpngw import write_apng
 
 
+camera_configs = {
+    "BedBathing": {
+        "camera_eye": [-0.7, -0.75, 1.5],
+        "camera_target": [0.0, 0, 0.75],
+        "camera_width": 1920//4,
+        "fov": 60,
+        "camera_height": 1080//4
+    }
+}
+
+
 def setup_config(env, algo, coop=False, seed=0, extra_configs={}):
     num_processes = multiprocessing.cpu_count()
     if algo == 'ppo':
@@ -65,6 +76,8 @@ def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/',
     agent, checkpoint_path = load_policy(env, algo, env_name, load_policy_path, coop, seed, extra_configs)
     env.disconnect()
 
+    # import pdb; pdb.set_trace()
+
     timesteps = 0
     while timesteps < timesteps_total:
         result = agent.train()
@@ -84,37 +97,42 @@ def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/',
         checkpoint_path = agent.save(os.path.join(save_dir, algo, env_name))
     return checkpoint_path
 
-def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, seed=0, extra_configs={}):
+def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, seed=0, extra_configs={}, num_eps=1):
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
     test_agent, _ = load_policy(env, algo, env_name, policy_path, coop, seed, extra_configs)
 
     if not colab:
         env.render()
-    obs = env.reset()
-    frames = []
-    done = False
-    while not done:
-        if coop:
-            # Compute the next action for the robot/human using the trained policies
-            action_robot = test_agent.compute_action(obs['robot'], policy_id='robot')
-            action_human = test_agent.compute_action(obs['human'], policy_id='human')
-            # Step the simulation forward using the actions from our trained policies
-            obs, reward, done, info = env.step({'robot': action_robot, 'human': action_human})
-            done = done['__all__']
-        else:
-            # Compute the next action using the trained policy
-            action = test_agent.compute_action(obs)
-            # Step the simulation forward using the action from our trained policy
-            obs, reward, done, info = env.step(action)
+
+    # import pdb; pdb.set_trace()
+    for eps_i in range(num_eps):
+        print(f"Render eps {eps_i}")
+        obs = env.reset()
+        frames = []
+        done = False
+        while not done:
+            if coop:
+                # Compute the next action for the robot/human using the trained policies
+                action_robot = test_agent.compute_action(obs['robot'], policy_id='robot')
+                action_human = test_agent.compute_action(obs['human'], policy_id='human')
+                # Step the simulation forward using the actions from our trained policies
+                obs, reward, done, info = env.step({'robot': action_robot, 'human': action_human})
+                done = done['__all__']
+            else:
+                # Compute the next action using the trained policy
+                action = test_agent.compute_action(obs)
+                # Step the simulation forward using the action from our trained policy
+                obs, reward, done, info = env.step(action)
+            if colab:
+                # Capture (render) an image from the camera
+                img, depth = env.get_camera_image_depth()
+                frames.append(img)
         if colab:
-            # Capture (render) an image from the camera
-            img, depth = env.get_camera_image_depth()
-            frames.append(img)
+            filename = f'output_{env_name}_{eps_i:02d}.png'
+            write_apng(filename, frames, delay=50)
+            #return filename
     env.disconnect()
-    if colab:
-        filename = 'output_%s.png' % env_name
-        write_apng(filename, frames, delay=100)
-        return filename
+
 
 def evaluate_policy(env_name, algo, policy_path, n_episodes=100, coop=False, seed=0, verbose=False, extra_configs={}):
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
@@ -172,6 +190,8 @@ def evaluate_policy(env_name, algo, policy_path, n_episodes=100, coop=False, see
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RL for Assistive Gym')
+    parser.add_argument('--params_file', default=None,
+                        help='yaml parameter file')
     parser.add_argument('--env', default='ScratchItchJaco-v0',
                         help='Environment to train on (default: ScratchItchJaco-v0)')
     parser.add_argument('--algo', default='ppo',
@@ -182,6 +202,8 @@ if __name__ == '__main__':
                         help='Whether to train a new policy')
     parser.add_argument('--render', action='store_true', default=False,
                         help='Whether to render a single rollout of a trained policy')
+    parser.add_argument('--render-eps', type=int, default=0,
+                        help="how many rollouts to render")
     parser.add_argument('--evaluate', action='store_true', default=False,
                         help='Whether to evaluate a trained policy over n_episodes')
     parser.add_argument('--train-timesteps', type=int, default=1000000,
@@ -198,16 +220,24 @@ if __name__ == '__main__':
                         help='Whether to output more verbose prints')
     args = parser.parse_args()
 
-    coop = ('Human' in args.env)
-    checkpoint_path = None
+    if args.params_file:
+        from dotmap import DotMap
+        import yaml
+        with open(args.params_file, "r") as f:
+            args = DotMap(yaml.load(f))
 
+    coop = ('Human' in args.env) and ('Pose' not in args.env)
+    checkpoint_path = None
     if args.train:
+        print(f"Train on environment {args.env}")
         checkpoint_path = train(args.env, args.algo, timesteps_total=args.train_timesteps, save_dir=args.save_dir, load_policy_path=args.load_policy_path, coop=coop, seed=args.seed)
     if args.render:
         env = make_env(args.env, coop)
+        env.seed(args.seed)
         if args.colab:
-            env.setup_camera(camera_eye=[0.5, -0.75, 1.5], camera_target=[-0.2, 0, 0.75], fov=60, camera_width=1920//4, camera_height=1080//4)
-        render_policy(env, args.env, args.algo, checkpoint_path if checkpoint_path is not None else args.load_policy_path, coop=coop, colab=args.colab, seed=args.seed)
+            # env.setup_camera(camera_eye=[0.5, -0.75, 1.5], camera_target=[-0.2, 0, 0.75], fov=60, camera_width=1920//4, camera_height=1080//4)
+            env.setup_camera(**camera_configs["BedBathing"])
+        render_policy(env, args.env, args.algo, checkpoint_path if checkpoint_path is not None else args.load_policy_path, coop=coop, colab=args.colab, seed=args.seed, num_eps=args.render_eps)
     if args.evaluate:
         evaluate_policy(args.env, args.algo, checkpoint_path if checkpoint_path is not None else args.load_policy_path, n_episodes=args.eval_episodes, coop=coop, seed=args.seed, verbose=args.verbose)
 

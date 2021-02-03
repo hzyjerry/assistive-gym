@@ -8,6 +8,8 @@ from .agents.jaco import Jaco
 from .agents.stretch import Stretch
 from .agents.panda import Panda
 from .agents.human import Human
+from .agents.agent_pose_control import HumanPoseControl, JacoPoseControl
+
 from .agents.human_mesh import HumanMesh
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from ray.tune.registry import register_env
@@ -29,6 +31,17 @@ class ScratchItchSawyerEnv(ScratchItchEnv):
 class ScratchItchJacoEnv(ScratchItchEnv):
     def __init__(self):
         super(ScratchItchJacoEnv, self).__init__(robot=Jaco(robot_arm), human=Human(human_controllable_joint_indices, controllable=False))
+
+class ScratchItchJacoHumanPoseEnv(ScratchItchEnv):
+    """Human using pose controller, train robot."""
+    def __init__(self, control_type=None):
+        super(ScratchItchJacoHumanPoseEnv, self).__init__(robot=Jaco(robot_arm), human=HumanPoseControl(human_controllable_joint_indices, program_type=0, pose_file="poses/scratch_itch_human_poses.yaml", control_type=control_type))
+
+class ScratchItchJacoRobotPoseEnv(ScratchItchEnv):
+    """Robot using pose controller, train human."""
+    def __init__(self, control_type=None):
+        super(ScratchItchJacoRobotPoseEnv, self).__init__(robot=JacoPoseControl(robot_arm, program_type=0, pose_file="poses/scratch_itch_jaco_poses.yaml", control_type=control_type), human=Human(human_controllable_joint_indices, controllable=True))
+
 
 class ScratchItchStretchEnv(ScratchItchEnv):
     def __init__(self):

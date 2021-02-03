@@ -1,16 +1,24 @@
 import numpy as np
 import pybullet as p
+from .agents.agent_pose_control import HumanPoseControl, RobotPoseControl
 
 from .env import AssistiveEnv
 
 class ScratchItchEnv(AssistiveEnv):
     def __init__(self, robot, human):
-        super(ScratchItchEnv, self).__init__(robot=robot, human=human, task='scratch_itch', obs_robot_len=(23 + len(robot.controllable_joint_indices) - (len(robot.wheel_joint_indices) if robot.mobile else 0)), obs_human_len=(24 + len(human.controllable_joint_indices)))
+        super(ScratchItchEnv, self).__init__(robot=robot, human=human, task='scratch_itch', obs_robot_len=(23 + len(robot.controllable_joint_indices) - (len(robot.wheel_joint_indices) if robot.mobile else 0)), obs_human_len=(24 + len(human.controllable_joint_indices)), frame_skip=1)
 
     def step(self, action):
-        if self.human.controllable:
+        if self.human.controllable and self.robot.controllable:
             action = np.concatenate([action['robot'], action['human']])
         self.take_step(action)
+
+
+        if isinstance(self.human, HumanPoseControl):
+            self.human.control()
+        elif isinstance(self.robot, RobotPoseControl):
+            self.robot.control()
+
 
         obs = self._get_obs()
         # print(np.array_str(obs, precision=3, suppress_small=True))
@@ -37,7 +45,8 @@ class ScratchItchEnv(AssistiveEnv):
         info = {'total_force_on_human': self.total_force_on_human, 'task_success': int(self.task_success >= self.config('task_success_threshold')), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
         done = self.iteration >= 200
 
-        if not self.human.controllable:
+
+        if not (self.human.controllable and self.robot.controllable):
             return obs, reward, done, info
         else:
             # Co-optimization with both human and robot controllable
@@ -93,6 +102,7 @@ class ScratchItchEnv(AssistiveEnv):
     def reset(self):
         super(ScratchItchEnv, self).reset()
         self.build_assistive_env('wheelchair')
+
         self.prev_target_contact_pos = np.zeros(3)
         if self.robot.wheelchair_mounted:
             wheelchair_pos, wheelchair_orient = self.furniture.get_base_pos_orient()
@@ -102,7 +112,7 @@ class ScratchItchEnv(AssistiveEnv):
 
         # Set joint angles for human joints (in degrees)
         joints_positions = [(self.human.j_right_shoulder_x, 30), (self.human.j_right_elbow, -90), (self.human.j_left_elbow, -90), (self.human.j_right_hip_x, -90), (self.human.j_right_knee, 80), (self.human.j_left_hip_x, -90), (self.human.j_left_knee, 80)]
-        self.human.setup_joints(joints_positions, use_static_joints=True, reactive_force=None if self.human.controllable else 1, reactive_gain=0.01)
+        self.human.setup_joints(joints_positions, use_static_joints=True, reactive_force=None if (self.human.controllable or isinstance(self.human, HumanPoseControl)) else 1, reactive_gain=0.01)
 
         shoulder_pos = self.human.get_pos_orient(self.human.right_shoulder)[0]
         elbow_pos = self.human.get_pos_orient(self.human.right_elbow)[0]
@@ -129,6 +139,13 @@ class ScratchItchEnv(AssistiveEnv):
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=self.id)
 
         self.init_env_variables()
+
+        if isinstance(self.robot, RobotPoseControl):
+            self.robot.reset()
+
+        if isinstance(self.human, HumanPoseControl):
+            self.human.reset()
+
         return self._get_obs()
 
     def generate_target(self):

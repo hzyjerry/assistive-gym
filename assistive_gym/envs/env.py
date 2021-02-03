@@ -1,4 +1,4 @@
-import os, time, configparser
+import os, time, configparser, yaml
 import numpy as np
 import gym
 from gym import spaces
@@ -12,6 +12,7 @@ from .human_creation import HumanCreation
 from .agents import agent, human, robot, tool, furniture
 from .agents.agent import Agent
 from .agents.human import Human
+from .agents.agent_pose_control import HumanPoseControl, RobotPoseControl, AgentPoseControl
 from .agents.robot import Robot
 from .agents.tool import Tool
 from .agents.furniture import Furniture
@@ -38,16 +39,25 @@ class AssistiveEnv(gym.Env):
         self.human_limits_model = load_model(os.path.join(self.directory, 'realistic_arm_limits_model.h5'))
         self.action_robot_len = len(robot.controllable_joint_indices) if robot is not None else 0
         self.action_human_len = len(human.controllable_joint_indices) if human is not None and human.controllable else 0
+        if isinstance(robot, RobotPoseControl):
+            self.action_robot_len = 0
+        if isinstance(human, HumanPoseControl):
+            self.action_human_len = 0
         self.action_space = spaces.Box(low=np.array([-1.0]*(self.action_robot_len+self.action_human_len), dtype=np.float32), high=np.array([1.0]*(self.action_robot_len+self.action_human_len), dtype=np.float32), dtype=np.float32)
         self.obs_robot_len = obs_robot_len
-        self.obs_human_len = obs_human_len if human is not None and human.controllable else 0
+        self.obs_human_len = obs_human_len if (human is not None and human.controllable) else 0
+        if isinstance(robot, RobotPoseControl):
+            self.obs_robot_len = 0
+        if isinstance(human, HumanPoseControl):
+            self.obs_human_len = 0
         self.observation_space = spaces.Box(low=np.array([-1000000000.0]*(self.obs_robot_len+self.obs_human_len), dtype=np.float32), high=np.array([1000000000.0]*(self.obs_robot_len+self.obs_human_len), dtype=np.float32), dtype=np.float32)
         self.action_space_robot = spaces.Box(low=np.array([-1.0]*self.action_robot_len, dtype=np.float32), high=np.array([1.0]*self.action_robot_len, dtype=np.float32), dtype=np.float32)
         self.action_space_human = spaces.Box(low=np.array([-1.0]*self.action_human_len, dtype=np.float32), high=np.array([1.0]*self.action_human_len, dtype=np.float32), dtype=np.float32)
         self.observation_space_robot = spaces.Box(low=np.array([-1000000000.0]*self.obs_robot_len, dtype=np.float32), high=np.array([1000000000.0]*self.obs_robot_len, dtype=np.float32), dtype=np.float32)
         self.observation_space_human = spaces.Box(low=np.array([-1000000000.0]*self.obs_human_len, dtype=np.float32), high=np.array([1000000000.0]*self.obs_human_len, dtype=np.float32), dtype=np.float32)
 
-        self.agents = []
+        self.agents = [] # controllable agents
+        self.all_agents = []
         self.plane = Agent()
         self.robot = robot
         self.human = human
@@ -105,6 +115,7 @@ class AssistiveEnv(gym.Env):
         p.setRealTimeSimulation(0, physicsClientId=self.id)
         p.setGravity(0, 0, self.gravity, physicsClientId=self.id)
         self.agents = []
+        self.all_agents = []
         self.last_sim_time = None
         self.iteration = 0
         self.forces = []
@@ -122,12 +133,17 @@ class AssistiveEnv(gym.Env):
         # Create robot
         if self.robot is not None:
             self.robot.init(self.directory, self.id, self.np_random, fixed_base=not self.robot.mobile)
-            self.agents.append(self.robot)
+            if self.robot.controllable:
+                self.agents.append(self.robot)
+            self.update_action_space()
+            self.all_agents.append(self.robot)
         # Create human
         if self.human is not None and isinstance(self.human, Human):
             self.human.init(self.human_creation, self.human_limits_model, fixed_human_base, human_impairment, gender, self.config, self.id, self.np_random)
+            self.all_agents.append(self.human)
             if self.human.controllable or self.human.impairment == 'tremor':
                 self.agents.append(self.human)
+            self.update_action_space()
         # Create furniture (wheelchair, bed, or table)
         if furniture_type is not None:
             self.furniture.init(furniture_type, self.directory, self.id, self.np_random, wheelchair_mounted=self.robot.wheelchair_mounted if self.robot is not None else False)
@@ -138,8 +154,14 @@ class AssistiveEnv(gym.Env):
             self.observation_space.__init__(low=-np.ones(obs_len, dtype=np.float32)*1000000000, high=np.ones(obs_len, dtype=np.float32)*1000000000, dtype=np.float32)
             self.update_action_space()
             # Define action/obs lengths
-            self.action_robot_len = len(self.robot.controllable_joint_indices)
-            self.action_human_len = len(self.human.controllable_joint_indices) if self.human.controllable else 0
+            if self.robot:
+                self.action_robot_len = len(self.robot.controllable_joint_indices)
+            else:
+                self.action_robot_len = 0
+            if self.human:
+                self.action_human_len = len(self.human.controllable_joint_indices) if self.human.controllable else 0
+            else:
+                self.action_human_len = 0
             self.obs_robot_len = len(self._get_obs('robot'))
             self.obs_human_len = len(self._get_obs('human'))
             self.action_space_robot = spaces.Box(low=np.array([-1.0]*self.action_robot_len, dtype=np.float32), high=np.array([1.0]*self.action_robot_len, dtype=np.float32), dtype=np.float32)
@@ -148,29 +170,74 @@ class AssistiveEnv(gym.Env):
             self.observation_space_human = spaces.Box(low=np.array([-1000000000.0]*self.obs_human_len, dtype=np.float32), high=np.array([1000000000.0]*self.obs_human_len, dtype=np.float32), dtype=np.float32)
 
     def update_action_space(self):
-        action_len = np.sum([len(a.controllable_joint_indices) for a in self.agents if not isinstance(a, Human) or a.controllable])
+        action_len = 0
+        for a in self.agents:
+            if a.controllable and not (isinstance(a, AgentPoseControl)):
+                action_len += len(a.controllable_joint_indices)
+        #import pdb; pdb.set_trace()
         self.action_space.__init__(low=-np.ones(action_len, dtype=np.float32), high=np.ones(action_len, dtype=np.float32), dtype=np.float32)
 
-    def create_human(self, controllable=False, controllable_joint_indices=[], fixed_base=False, human_impairment='random', gender='random', mass=None, radius_scale=1.0, height_scale=1.0):
+    def create_human(self, controllable=False, controllable_joint_indices=[], fixed_base=False, human_impairment='random', gender='random', mass=None, radius_scale=1.0, height_scale=1.0, pose_control_type=None, pose_control_file=None):
         '''
         human_impairement in ['none', 'limits', 'weakness', 'tremor']
         gender in ['male', 'female']
         '''
-        self.human = Human(controllable_joint_indices, controllable=controllable)
+        # import pdb; pdb.set_trace()
+        if pose_control_type is None:
+            self.human = Human(controllable_joint_indices, controllable=controllable)
+        else:
+            self.human = HumanPoseControl(controllable_joint_indices, controllable=controllable)
+            self.human.initialize_program(program_type=pose_control_type, pose_file=pose_control_file)
+
         self.human.init(self.human_creation, self.human_limits_model, fixed_base, human_impairment, gender, None, self.id, self.np_random, mass=mass, radius_scale=radius_scale, height_scale=height_scale)
         if controllable or self.human.impairment == 'tremor':
             self.agents.append(self.human)
             self.update_action_space()
+        self.all_agents.append(self.human)
         return self.human
 
-    def create_robot(self, robot_class, controllable_joints='right', fixed_base=True):
-        self.robot = robot_class(controllable_joints)
+    def create_robot(self, robot_class, controllable_joints='right', fixed_base=True, pose_control_type=None, pose_control_file=None):
+        if pose_control_type is None:
+            self.robot = robot_class(controllable_joints)
+        else:
+            self.robot = RobotPoseControl(controllable_joints, controllable=controllable)
+            self.robot.initialize_program(program_type=pose_control_type, pose_file=pose_control_file)
+
         self.robot.init(self.directory, self.id, self.np_random, fixed_base=fixed_base)
-        self.agents.append(self.robot)
+        if self.robot.controllable:
+            self.agents.append(self.robot)
+        self.all_agents.append(self.robot)
         self.update_action_space()
         return self.robot
 
-    def take_step(self, actions, gains=None, forces=None, action_multiplier=0.05, step_sim=True):
+    def _save_pose(self, robot_file=None, human_file=None):
+        if human_file is not None:
+            human_joints = self.human.get_joint_angles(self.human.controllable_joint_indices).tolist()
+            with open(human_file, 'a+') as file:
+                poses = yaml.load(file)
+                if poses is None:
+                    poses = []
+                poses.append(human_joints)
+                yaml.dump(poses, file)
+        if robot_file is not None:
+            robot_joints = self.robot.get_joint_angles(self.robot.controllable_joint_indices).tolist()
+            with open(robot_file, 'a+') as file:
+                poses = yaml.load(file)
+                if poses is None:
+                    poses = []
+                poses.append(robot_joints)
+                yaml.dump(poses, file)
+            print("Save Pose Iteration", self.iteration)
+
+    # def take_step(self, actions, gains=None, forces=None, action_multiplier=0.05, step_sim=True):
+    def take_step(self, actions, gains=None, forces=None, action_multiplier=0.25, step_sim=True):
+
+        robot_pose, human_pose = None, None
+        # robot_pose, human_pose = "poses/bed_bathing_jaco_poses.yaml", "poses/bed_bathing_human_poses.yaml"
+        # robot_pose, human_pose = "poses/scratch_itch_jaco_poses.yaml", "poses/scratch_itch_human_poses.yaml"
+        self._save_pose(robot_pose, human_pose)
+
+        # import pdb; pdb.set_trace()
         if gains is None:
             gains = [a.motor_gains for a in self.agents]
         elif type(gains) not in (list, tuple):
@@ -200,25 +267,30 @@ class AssistiveEnv(gym.Env):
             # Append the new action to the current measured joint angles
             agent_joint_angles = agent.get_joint_angles(agent.controllable_joint_indices)
             # Update the target robot/human joint angles based on the proposed action and joint limits
-            for _ in range(self.frame_skip):
-                if needs_action:
-                    below_lower_limits = agent_joint_angles + action < agent.controllable_joint_lower_limits
-                    above_upper_limits = agent_joint_angles + action > agent.controllable_joint_upper_limits
-                    action[below_lower_limits] = 0
-                    action[above_upper_limits] = 0
-                    agent_joint_angles[below_lower_limits] = agent.controllable_joint_lower_limits[below_lower_limits]
-                    agent_joint_angles[above_upper_limits] = agent.controllable_joint_upper_limits[above_upper_limits]
-                if isinstance(agent, Human) and agent.impairment == 'tremor':
-                    if needs_action:
-                        agent.target_joint_angles += action
-                    agent_joint_angles = agent.target_joint_angles + agent.tremors * (1 if self.iteration % 2 == 0 else -1)
-                else:
-                    agent_joint_angles += action
-            if isinstance(agent, Robot) and agent.action_duplication is not None:
-                agent_joint_angles = np.concatenate([[a]*d for a, d in zip(agent_joint_angles, self.robot.action_duplication)])
-                agent.control(agent.all_controllable_joints, agent_joint_angles, agent.gains, agent.forces)
+            if isinstance(agent, HumanPoseControl) or isinstance(agent, RobotPoseControl):
+                # Pose control
+                agent.control()
             else:
-                agent.control(agent.controllable_joint_indices, agent_joint_angles, gains[i], forces[i])
+                # Force Control
+                for _ in range(self.frame_skip):
+                    if needs_action:
+                        below_lower_limits = agent_joint_angles + action < agent.controllable_joint_lower_limits
+                        above_upper_limits = agent_joint_angles + action > agent.controllable_joint_upper_limits
+                        action[below_lower_limits] = 0
+                        action[above_upper_limits] = 0
+                        agent_joint_angles[below_lower_limits] = agent.controllable_joint_lower_limits[below_lower_limits]
+                        agent_joint_angles[above_upper_limits] = agent.controllable_joint_upper_limits[above_upper_limits]
+                    if isinstance(agent, Human) and agent.impairment == 'tremor':
+                        if needs_action:
+                            agent.target_joint_angles += action
+                        agent_joint_angles = agent.target_joint_angles + agent.tremors * (1 if self.iteration % 2 == 0 else -1)
+                    else:
+                        agent_joint_angles += action
+                if isinstance(agent, Robot) and agent.action_duplication is not None:
+                    agent_joint_angles = np.concatenate([[a]*d for a, d in zip(agent_joint_angles, self.robot.action_duplication)])
+                    agent.control(agent.all_controllable_joints, agent_joint_angles, agent.gains, agent.forces)
+                else:
+                    agent.control(agent.controllable_joint_indices, agent_joint_angles, gains[i], forces[i])
         if step_sim:
             # Update all agent positions
             for _ in range(self.frame_skip):

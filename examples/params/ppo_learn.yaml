@@ -1,0 +1,19 @@
+params_file: null
+# env: BedBathingJacoHumanPose-v14
+env: BedBathingJacoRobotPose-v12
+# env: BedBathingJacoHuman-v1
+# env: ScratchItchJacoHumanPose-v14
+# env: ScratchItchJacoHuman-v1
+algo: ppo
+seed: 1
+train: true
+render: false
+render_eps: 1
+evaluate: false
+train_timesteps: 10000000
+# save_dir: new_models
+save_dir: /gcp_output
+load_policy_path: load_models
+eval_episodes: 100
+colab: false
+verbose: True

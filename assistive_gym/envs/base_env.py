@@ -9,6 +9,7 @@ from .human_creation import HumanCreation
 from .agents import agent, human
 from .agents.agent import Agent
 from .agents.human import Human
+from .agents.human_pose_control import HumanPoseControl
 
 class BaseEnv:
     def __init__(self, time_step=0.02, frame_skip=5, render=True, gravity=-9.81, seed=1001):
@@ -48,13 +49,17 @@ class BaseEnv:
         self.iteration = 0
         self.action_space = None
 
-    def create_human(self, controllable=False, controllable_joint_indices=[], fixed_base=False, human_impairment='random', gender='random', mass=None, radius_scale=1.0, height_scale=1.0):
+    def create_human(self, controllable=False, controllable_joint_indices=[], fixed_base=False, human_impairment='random', gender='random', mass=None, radius_scale=1.0, height_scale=1.0, pose_control_type=None, pose_control_file=None):
         '''
         human_impairement in ['none', 'limits', 'weakness', 'tremor']
         gender in ['male', 'female']
         '''
-        human = Human(controllable_joint_indices, controllable=controllable)
-        human.init(self.human_creation, self.human_limits_model, fixed_base, human_impairment, gender, None, self.id, self.np_random, mass=mass, radius_scale=radius_scale, height_scale=height_scale)
+        if pose_control_type is None:
+            human = Human(controllable_joint_indices, controllable=controllable)
+        else:
+            human = HumanPoseControl(controllable_joint_indices, controllable=controllable)
+            human.initialize_program(program_type=pose_control_type, pose_file=pose_control_file)
+        human.init(self.human_creation, self.human_limits_model, fixed_base, human_impairment, gender, None, self.id, self.np_random, mass=mass, radius_scale=radius_scale, height_scale=height_scale, pose_control_type=pose_control_type)
         if controllable:
             self.agents.append(human)
         return human
