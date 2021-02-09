@@ -32,8 +32,8 @@ def launch():
         azure_storage="assistivegym",
         gcp_bucket_name="assistive-gym-experiments",
         gcp_bucket_path="rss-logs",  # Folder to store logs
-        # instance_type="Standard_F32s_v2",
-        instance_type="Standard_D32s_v3",
+        instance_type="Standard_F32s_v2",
+        # instance_type="Standard_D32s_v3",
         # instance_type="Standard_D16s_v3",
         # instance_type="Standard_F16s_v2",
         # instance_type="STANDARD_D4_V3",

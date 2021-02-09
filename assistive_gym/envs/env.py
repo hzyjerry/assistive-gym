@@ -18,7 +18,7 @@ from .agents.tool import Tool
 from .agents.furniture import Furniture
 
 class AssistiveEnv(gym.Env):
-    def __init__(self, robot=None, human=None, task='', obs_robot_len=0, obs_human_len=0, time_step=0.02, frame_skip=5, render=False, gravity=-9.81, seed=1001):
+    def __init__(self, robot=None, human=None, task='', obs_robot_len=0, obs_human_len=0, time_step=0.02, frame_skip=1, render=False, gravity=-9.81, seed=1001):
         self.task = task
         self.time_step = time_step
         self.frame_skip = frame_skip
@@ -229,8 +229,8 @@ class AssistiveEnv(gym.Env):
                 yaml.dump(poses, file)
             print("Save Pose Iteration", self.iteration)
 
-    # def take_step(self, actions, gains=None, forces=None, action_multiplier=0.05, step_sim=True):
-    def take_step(self, actions, gains=None, forces=None, action_multiplier=0.25, step_sim=True):
+    def take_step(self, actions, gains=None, forces=None, action_multiplier=0.05, step_sim=True):
+    # def take_step(self, actions, gains=None, forces=None, action_multiplier=0.25, step_sim=True):
 
         robot_pose, human_pose = None, None
         # robot_pose, human_pose = "poses/bed_bathing_jaco_poses.yaml", "poses/bed_bathing_human_poses.yaml"

@@ -4,6 +4,7 @@ import numpy as np
 from ray.rllib.agents import ppo, sac
 from ray.tune.logger import pretty_print
 from numpngw import write_apng
+from array2gif import write_gif
 
 
 camera_configs = {
@@ -57,8 +58,11 @@ def load_policy(env, algo, env_name, policy_path=None, coop=False, seed=0, extra
             if files:
                 checkpoint_num = max(files)
                 checkpoint_path = os.path.join(directory, 'checkpoint_%d' % checkpoint_num, 'checkpoint-%d' % checkpoint_num)
+                print(f"Load from checkpoint {checkpoint_path}")
                 agent.restore(checkpoint_path)
                 # return agent, checkpoint_path
+            else:
+                print("Did not find checkpoint files")
             return agent, None
     return agent, None
 
@@ -103,13 +107,13 @@ def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, see
 
     if not colab:
         env.render()
-
     # import pdb; pdb.set_trace()
     for eps_i in range(num_eps):
         print(f"Render eps {eps_i}")
         obs = env.reset()
         frames = []
         done = False
+        rew = None
         while not done:
             if coop:
                 # Compute the next action for the robot/human using the trained policies
@@ -118,19 +122,37 @@ def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, see
                 # Step the simulation forward using the actions from our trained policies
                 obs, reward, done, info = env.step({'robot': action_robot, 'human': action_human})
                 done = done['__all__']
+                rew = reward if not rew else {key: rew[key] + reward[key] for key in reward.keys()}
             else:
                 # Compute the next action using the trained policy
                 action = test_agent.compute_action(obs)
                 # Step the simulation forward using the action from our trained policy
                 obs, reward, done, info = env.step(action)
+                rew = reward if not rew else rew + reward
             if colab:
+                def _resize(img, ratio):
+                    import cv2
+                    old_w, old_h = img.shape[1], img.shape[0]
+                    new_w = int(old_w * ratio)
+                    new_h = int(old_h * ratio)
+                    img = cv2.resize(img, (new_w, new_h))
+                    return img
                 # Capture (render) an image from the camera
                 img, depth = env.get_camera_image_depth()
+                img = _resize(img, 0.5)
                 frames.append(img)
         if colab:
             filename = f'output_{env_name}_{eps_i:02d}.png'
             write_apng(filename, frames, delay=50)
+            # filename = f'output_{env_name}_{eps_i:02d}.gif'
+            # import pdb; pdb.set_trace()
+            # write_gif(frames, filename, fps=20)
             #return filename
+        if coop:
+            for key, val in rew.items():
+                print(f"Reward {key}: {val}")
+            else:
+                print(f"Reward {rew}")
     env.disconnect()
 
 
@@ -202,7 +224,7 @@ if __name__ == '__main__':
                         help='Whether to train a new policy')
     parser.add_argument('--render', action='store_true', default=False,
                         help='Whether to render a single rollout of a trained policy')
-    parser.add_argument('--render-eps', type=int, default=0,
+    parser.add_argument('--render-eps', type=int, default=5,
                         help="how many rollouts to render")
     parser.add_argument('--evaluate', action='store_true', default=False,
                         help='Whether to evaluate a trained policy over n_episodes')

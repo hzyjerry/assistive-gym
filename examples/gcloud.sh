@@ -3,7 +3,7 @@ gsutil ls -lh "gs://assistive-gym-experiments/rss-logs/" | sort -k 3
 
 
 
-gsutil -o 'GSUtil:parallel_process_count=1' -o 'GSUtil:parallel_thread_count=16' -m cp -r "gs://assistive-gym-experiments/rss-logs/logs/output/ppo/BedBathing*" "new_models/ppo/"
+gsutil -o 'GSUtil:parallel_process_count=1' -o 'GSUtil:parallel_thread_count=16' -m cp -r "gs://assistive-gym-experiments/rss-logs/logs/output/210207" "new_models/"
 
 gsutil -o 'GSUtil:parallel_process_count=1' -o 'GSUtil:parallel_thread_count=16' -m cp -r gs://assistive-gym-experiments/rss-logs/logs/output/ppo/BedBathingJacoHuman-v1/checkpoint_402 new_models/ppo/BedBathingJacoHuman-v1/
 

@@ -1,5 +1,6 @@
 import numpy as np
 import pybullet as p
+import os, configparser
 
 from .env import AssistiveEnv
 from .agents import furniture
@@ -7,13 +8,25 @@ from .agents.agent_pose_control import HumanPoseControl, RobotPoseControl
 from .agents.furniture import Furniture
 
 class BedBathingEnv(AssistiveEnv):
-    def __init__(self, robot, human):
-        super(BedBathingEnv, self).__init__(robot=robot, human=human, task='bed_bathing', obs_robot_len=(17 + len(robot.controllable_joint_indices) - (len(robot.wheel_joint_indices) if robot.mobile else 0)), obs_human_len=(18 + len(human.controllable_joint_indices)), frame_skip=1)
+    def __init__(self, robot, human, frame_skip=5,
+        action_multiplier=0.05, collab_version='v4'):
+        super(BedBathingEnv, self).__init__(robot=robot, human=human, task='bed_bathing', obs_robot_len=(17 + len(robot.controllable_joint_indices) - (len(robot.wheel_joint_indices) if robot.mobile else 0)), obs_human_len=(18 + len(human.controllable_joint_indices)), frame_skip=frame_skip)
+        self.action_multiplier = action_multiplier
+        self.env_configp = configparser.ConfigParser()
+        self.env_configp.read(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'bed_config.ini'))
+        self.c_ver = collab_version
+
+    def env_config(self, tag, section=None):
+        return float(self.env_configp[self.task if section is None else section][tag])
 
     def step(self, action):
+
+        human_action, robot_action = 0, action
         if self.human.controllable and self.robot.controllable:
+            human_action = action['human']
+            robot_action = action['robot']
             action = np.concatenate([action['robot'], action['human']])
-        self.take_step(action)
+        self.take_step(action, action_multiplier = self.action_multiplier)
 
         if isinstance(self.human, HumanPoseControl):
             self.human.control()
@@ -29,12 +42,14 @@ class BedBathingEnv(AssistiveEnv):
         reward_distance = -min(self.tool.get_closest_points(self.human, distance=5.0)[-1])
         reward_action = -np.linalg.norm(action) # Penalize actions
         reward_new_contact_points = self.new_contact_points # Reward new contact points on a person
+        reward_collab = -np.linalg.norm(human_action) * self.env_config("human_action_penalty", self.c_ver) -np.linalg.norm(robot_action) * self.env_config("robot_action_penalty", self.c_ver)
 
         reward = self.config('distance_weight')*reward_distance + self.config('action_weight')*reward_action + self.config('wiping_reward_weight')*reward_new_contact_points + preferences_score
 
-        if self.gui and self.tool_force_on_human > 0:
-            print('Task success:', self.task_success, 'Force at tool on human:', self.tool_force_on_human, reward_new_contact_points)
+        # if self.gui and self.tool_force_on_human > 0:
+        #     print('Task success:', self.task_success, 'Force at tool on human:', self.tool_force_on_human, reward_new_contact_points)
 
+        print(f"Task reward {self.config('wiping_reward_weight')*reward_new_contact_points:.03f} preference {preferences_score:.03f} action reward {self.config('action_weight')*reward_action:.03f} distance reward {reward_distance:.03f}")
         info = {'total_force_on_human': self.total_force_on_human, 'task_success': int(self.task_success >= (self.total_target_count*self.config('task_success_threshold'))), 'action_robot_len': self.action_robot_len, 'action_human_len': self.action_human_len, 'obs_robot_len': self.obs_robot_len, 'obs_human_len': self.obs_human_len}
         done = self.iteration >= 200
 
