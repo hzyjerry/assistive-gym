@@ -2,25 +2,35 @@ params_file: null
 # env: BedBathingJacoHumanPose-v14
 # env: BedBathingJacoRobotPose-v12
 # env: BedBathingJacoHuman-v1-skip5-collab1
-env: BedBathingJacoHuman-v1-skip5
+# env: BedBathingJacoHuman-v1-skip5
+# env: BedBathingJacoHuman-v1-skip1-ts01
+# env: BedBathingJacoHuman-v1-skip5-v0208_r1 # 210210-11:30pm
+# env: BedBathingJacoHuman-v1-skip5-v0208_r4 # 210210-11:30pm
+# env: BedBathingJacoHuman-v1-skip5-v0208_r12 # 210210-11:30pm
+env: BedBathingJacoHuman-v1-skip5-v0208_h1 # 210210-11:30pm
 # env: BedBathingJacoHuman-v1-skip5
 # env: ScratchItchJacoHumanPose-v14
 # env: ScratchItchJacoHuman-v1
 algo: ppo
 seed: 1
-train: false
+
 # train: true
-render: true
 # render: false
 # render_eps: 0
+# colab: false
+# save_per_iter: 10
+
+train: false
+render: true
 render_eps: 25
+colab: true
+save_per_iter: 1
+
+
 evaluate: false
 train_timesteps: 10000000
-save_dir: new_models/210207
-# save_dir: /gcp_output/210207
-# load_policy_path: load_models
-load_policy_path: new_models/210207
+save_dir: new_models/210208
+# save_dir: /gcp_output/210208
+load_policy_path: new_models/210208
 eval_episodes: 100
-colab: true
-# colab: false
 verbose: True

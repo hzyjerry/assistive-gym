@@ -9,6 +9,7 @@ def launch():
         ".log",
         ".git",
         ".mp4",
+        ".png",
         ".npz",
         ".ipynb",
         "lib",

@@ -8,8 +8,8 @@
 # src_dir="data/200413/interactive_proposal_divide_training_03_propose_04/visualize"
 # target_dir="data/200413/interactive_proposal_divide_training_03_propose_04/gifs"
 
-src_dir="/Users/jerry/Dropbox/Projects/AssistRobotics/assistive-gym/images/210107"
-target_dir="/Users/jerry/Dropbox/Projects/AssistRobotics/assistive-gym/images/210107"
+src_dir="/Users/jerry/Dropbox/Projects/AssistRobotics/assistive-gym/images/210208"
+target_dir="/Users/jerry/Dropbox/Projects/AssistRobotics/assistive-gym/images/210208"
 
 
 mkdir -p "$target_dir"

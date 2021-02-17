@@ -71,14 +71,39 @@ class BedBathingSawyerHumanEnv(BedBathingEnv, MultiAgentEnv):
 register_env('assistive_gym:BedBathingSawyerHuman-v1', lambda config: BedBathingSawyerHumanEnv())
 
 class BedBathingJacoHumanEnv(BedBathingEnv, MultiAgentEnv):
-    def __init__(self, frame_skip=5, action_multiplier=0.05, collab_version='v4'):
-        super(BedBathingJacoHumanEnv, self).__init__(robot=Jaco(robot_arm), human=Human(human_controllable_joint_indices, controllable=True), frame_skip=frame_skip, action_multiplier=action_multiplier, collab_version=collab_version)
+    def __init__(self, frame_skip=5, action_multiplier=0.05, collab_version='v4', time_step=0.02):
+        super(BedBathingJacoHumanEnv, self).__init__(robot=Jaco(robot_arm), human=Human(human_controllable_joint_indices, controllable=True), frame_skip=frame_skip, action_multiplier=action_multiplier, collab_version=collab_version, time_step=time_step)
+
+# import pdb; pdb.set_trace()
+
+
 register_env('assistive_gym:BedBathingJacoHuman-v1', lambda config: BedBathingJacoHumanEnv())
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip1', lambda config: BedBathingJacoHumanEnv(frame_skip=1, action_multiplier=0.25))
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip5', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05))
+
+
+## 2021.02.08
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip1-ts01', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, time_step=0.1))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_r12', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_r12"))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_r8', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_r8"))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_r4', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_r4"))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_r1', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_r1"))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_h12', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_h12"))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_h8', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_h8"))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_h4', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_h4"))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_h1', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_h1"))
+register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_0', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_0"))
+
+
+
+## 2021.02.07
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-collab3', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v3"))
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-collab2', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v2"))
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-collab1', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v1"))
+
+
+
+
 
 class BedBathingStretchHumanEnv(BedBathingEnv, MultiAgentEnv):
     def __init__(self):

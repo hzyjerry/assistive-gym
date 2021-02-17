@@ -4,7 +4,7 @@ import numpy as np
 from ray.rllib.agents import ppo, sac
 from ray.tune.logger import pretty_print
 from numpngw import write_apng
-from array2gif import write_gif
+# from array2gif import write_gif
 
 
 camera_configs = {
@@ -74,7 +74,7 @@ def make_env(env_name, coop=False):
         env_class = getattr(module, env_name.split('-')[0] + 'Env')
         return env_class()
 
-def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/', load_policy_path='', coop=False, seed=0, extra_configs={}):
+def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/', load_policy_path='', coop=False, seed=0, extra_configs={}, save_per_iter=1):
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
     env = make_env(env_name, coop)
     agent, checkpoint_path = load_policy(env, algo, env_name, load_policy_path, coop, seed, extra_configs)
@@ -94,11 +94,15 @@ def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/',
         print(f"Iteration: {result['training_iteration']}, total timesteps: {result['timesteps_total']}, total time: {result['time_total_s']:.1f}, FPS: {result['timesteps_total']/result['time_total_s']:.1f}, mean reward: {result['episode_reward_mean']:.1f}, min/max reward: {result['episode_reward_min']:.1f}/{result['episode_reward_max']:.1f}")
         sys.stdout.flush()
 
+
         # Delete the old saved policy
         if checkpoint_path is not None:
             shutil.rmtree(os.path.dirname(checkpoint_path), ignore_errors=True)
         # Save the recently trained policy
-        checkpoint_path = agent.save(os.path.join(save_dir, algo, env_name))
+        if result['training_iteration'] % save_per_iter == 0:
+            checkpoint_path = agent.save(os.path.join(save_dir, algo, env_name))
+    # Save at the end
+    checkpoint_path = agent.save(os.path.join(save_dir, algo, env_name))
     return checkpoint_path
 
 def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, seed=0, extra_configs={}, num_eps=1):
@@ -123,6 +127,8 @@ def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, see
                 obs, reward, done, info = env.step({'robot': action_robot, 'human': action_human})
                 done = done['__all__']
                 rew = reward if not rew else {key: rew[key] + reward[key] for key in reward.keys()}
+                # print(f"Task reward {info['robot']['task_reward']:.04f} action reward {info['robot']['action_reward']:.04f}, preference reward {info['robot']['preference_reward']:.04f}")
+                # import pdb; pdb.set_trace()
             else:
                 # Compute the next action using the trained policy
                 action = test_agent.compute_action(obs)
@@ -232,6 +238,7 @@ if __name__ == '__main__':
                         help='Number of simulation timesteps to train a policy (default: 1000000)')
     parser.add_argument('--save-dir', default='./trained_models/',
                         help='Directory to save trained policy in (default ./trained_models/)')
+    parser.add_argument('--save-per-iter', type=int, default=1)
     parser.add_argument('--load-policy-path', default='./trained_models/',
                         help='Path name to saved policy checkpoint (NOTE: Use this to continue training an existing policy, or to evaluate a trained policy)')
     parser.add_argument('--eval-episodes', type=int, default=100,
@@ -252,7 +259,7 @@ if __name__ == '__main__':
     checkpoint_path = None
     if args.train:
         print(f"Train on environment {args.env}")
-        checkpoint_path = train(args.env, args.algo, timesteps_total=args.train_timesteps, save_dir=args.save_dir, load_policy_path=args.load_policy_path, coop=coop, seed=args.seed)
+        checkpoint_path = train(args.env, args.algo, timesteps_total=args.train_timesteps, save_dir=args.save_dir, load_policy_path=args.load_policy_path, coop=coop, seed=args.seed, save_per_iter=args.save_per_iter)
     if args.render:
         env = make_env(args.env, coop)
         env.seed(args.seed)
