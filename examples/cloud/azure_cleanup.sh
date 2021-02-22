@@ -1,7 +1,8 @@
 ## Azure nic
 #az network nic list --query "[?contains(@.name, 'jerry')==\`true\`].name"
 
-rgname=jerry-assisted-reward-design
+# rgname=jerry-assisted-reward-design
+rgname=assistive-gym
 
 ## Delete used NIC
 for nicname in `az network nic list --query "[? contains(name, 'doodad')].name"  -o tsv`;
@@ -25,4 +26,6 @@ do
     echo Deleting disk ${diskname}
     az disk delete --resource-group ${rgname} --name ${diskname} --no-wait -y
 done
+
+
 

@@ -42,6 +42,7 @@ def launch():
         # use_spot=True,
         azure_label="assistive-gym-training",
         gcp_auth_file="https://www.dropbox.com/s/swtwk3j5yf5dwmk/aerial-citron-264318-cbf5beb3284c.json",
+        auto_shutdown=500,
     )
     gcp_mnt = mount.MountLocal(
         local_dir="../assistive-gym", mount_point="./assistive-gym", filter_ext=filter_ext

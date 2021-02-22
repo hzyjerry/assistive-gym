@@ -71,18 +71,35 @@ class BedBathingSawyerHumanEnv(BedBathingEnv, MultiAgentEnv):
 register_env('assistive_gym:BedBathingSawyerHuman-v1', lambda config: BedBathingSawyerHumanEnv())
 
 class BedBathingJacoHumanEnv(BedBathingEnv, MultiAgentEnv):
-    def __init__(self, frame_skip=5, action_multiplier=0.05, collab_version='v4', time_step=0.02):
-        super(BedBathingJacoHumanEnv, self).__init__(robot=Jaco(robot_arm), human=Human(human_controllable_joint_indices, controllable=True), frame_skip=frame_skip, action_multiplier=action_multiplier, collab_version=collab_version, time_step=time_step)
-
-# import pdb; pdb.set_trace()
+    def __init__(self, frame_skip=5, action_multiplier=0.05, collab_version='v4', time_step=0.02, impairment="random"):
+        super(BedBathingJacoHumanEnv, self).__init__(robot=Jaco(robot_arm), human=Human(human_controllable_joint_indices, controllable=True, impairment=impairment), frame_skip=frame_skip, action_multiplier=action_multiplier, collab_version=collab_version, time_step=time_step)
 
 
 register_env('assistive_gym:BedBathingJacoHuman-v1', lambda config: BedBathingJacoHumanEnv())
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip1', lambda config: BedBathingJacoHumanEnv(frame_skip=1, action_multiplier=0.25))
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip5', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05))
 
+""" 2021.02.21
+- Train with human agents
+"""
+register_env(f'assistive_gym:BedBathingJacoPersonalize-{collab_v}-v1', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version=collab_v, impairment="none"))
 
-## 2021.02.08
+
+""" 2021.02.17
+- No impairment
+
+"""
+
+# No impairment
+for collab_v in ["v0217_r8", "v0217_r4", "v0217_r1", "v0217_r05", "v0217_h3", "v0217_h1", "v0217_h05", "v0217_h02", "v0217_0"]:
+    register_env(f'assistive_gym:BedBathingJacoHuman-{collab_v}-v1', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version=collab_v, impairment="none"))
+
+
+
+""" 2021.02.08
+- Random Impairment
+
+"""
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip1-ts01', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, time_step=0.1))
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_r12', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_r12"))
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip5-v0208_r8', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version="v0208_r8"))

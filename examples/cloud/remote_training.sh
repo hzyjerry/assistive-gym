@@ -21,10 +21,14 @@ source env/bin/activate
 pip3 install --upgrade pip
 pip3 install -e ./assistive-gym
 
+## Logging
+pip3 install tensorboard==1.15.0
+pip3 install tensorboardX
+
 cd assistive-gym
 wget https://www.dropbox.com/s/fw522y3zdi9kg9p/assets.zip
 unzip assets.zip
 mv assets assistive_gym/envs/assets
 ## Run experiment
 cat examples/params/ppo_learn.yaml
-python3 -m assistive_gym.learn --params_file examples/params/ppo_learn.yaml
+python3 -m assistive_gym.learn examples/params/ppo_learn.yaml --train --cloud

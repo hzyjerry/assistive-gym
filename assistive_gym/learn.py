@@ -4,7 +4,6 @@ import numpy as np
 from ray.rllib.agents import ppo, sac
 from ray.tune.logger import pretty_print
 from numpngw import write_apng
-# from array2gif import write_gif
 
 
 camera_configs = {
@@ -15,6 +14,7 @@ camera_configs = {
         "fov": 60,
         "camera_height": 1080//4
     }
+    # env.setup_camera(camera_eye=[0.5, -0.75, 1.5], camera_target=[-0.2, 0, 0.75], fov=60, camera_width=1920//4, camera_height=1080//4)
 }
 
 
@@ -74,13 +74,19 @@ def make_env(env_name, coop=False):
         env_class = getattr(module, env_name.split('-')[0] + 'Env')
         return env_class()
 
-def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/', load_policy_path='', coop=False, seed=0, extra_configs={}, save_per_iter=1):
+def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/', load_policy_path='', coop=False, seed=0, extra_configs={}, save_per_iter=1, params={}):
+    from torch.utils.tensorboard import SummaryWriter
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
     env = make_env(env_name, coop)
     agent, checkpoint_path = load_policy(env, algo, env_name, load_policy_path, coop, seed, extra_configs)
     env.disconnect()
 
-    # import pdb; pdb.set_trace()
+    save_path = os.path.join(save_dir, algo, env_name)
+    print(f"Saving to {save_path}")
+    os.makedirs(save_path, exist_ok=True)
+    with open(os.path.join(save_path, "params.yaml"), "w+") as f:
+        yaml.dump(params, f)
+    writer = SummaryWriter(log_dir=os.path.join(save_dir, "runs", env_name), comment=env_name)
 
     timesteps = 0
     while timesteps < timesteps_total:
@@ -94,21 +100,28 @@ def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/',
         print(f"Iteration: {result['training_iteration']}, total timesteps: {result['timesteps_total']}, total time: {result['time_total_s']:.1f}, FPS: {result['timesteps_total']/result['time_total_s']:.1f}, mean reward: {result['episode_reward_mean']:.1f}, min/max reward: {result['episode_reward_min']:.1f}/{result['episode_reward_max']:.1f}")
         sys.stdout.flush()
 
-
+        iteration = result['training_iteration']
+        writer.add_scalar("vals/fps", result['timesteps_total']/result['time_total_s'], iteration)
+        writer.add_scalar("vals/meanReward", result['episode_reward_mean'], iteration)
+        writer.add_scalar("vals/minReward", result['episode_reward_min'], iteration)
+        writer.add_scalar("vals/maxReward", result['episode_reward_max'], iteration)
+        writer.flush()
         # Delete the old saved policy
         if checkpoint_path is not None:
             shutil.rmtree(os.path.dirname(checkpoint_path), ignore_errors=True)
         # Save the recently trained policy
         if result['training_iteration'] % save_per_iter == 0:
-            checkpoint_path = agent.save(os.path.join(save_dir, algo, env_name))
+            checkpoint_path = agent.save(save_path)
     # Save at the end
-    checkpoint_path = agent.save(os.path.join(save_dir, algo, env_name))
+    checkpoint_path = agent.save(save_path)
+    writer.close()
     return checkpoint_path
 
-def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, seed=0, extra_configs={}, num_eps=1):
+def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, seed=0, extra_configs={}, num_eps=1, image_path="."):
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
     test_agent, _ = load_policy(env, algo, env_name, policy_path, coop, seed, extra_configs)
 
+    os.makedirs(image_path, exist_ok=True)
     if not colab:
         env.render()
     # import pdb; pdb.set_trace()
@@ -148,7 +161,10 @@ def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, see
                 img = _resize(img, 0.5)
                 frames.append(img)
         if colab:
-            filename = f'output_{env_name}_{eps_i:02d}.png'
+            if coop:
+                filename = f"{image_path}/output_{env_name}_{eps_i:02d}_rew_{rew['robot']:.03f}.png"
+            else:
+                filename = f"{image_path}/output_{env_name}_{eps_i:02d}_rew_{rew:.03f}.png"
             write_apng(filename, frames, delay=50)
             # filename = f'output_{env_name}_{eps_i:02d}.gif'
             # import pdb; pdb.set_trace()
@@ -162,7 +178,7 @@ def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, see
     env.disconnect()
 
 
-def evaluate_policy(env_name, algo, policy_path, n_episodes=100, coop=False, seed=0, verbose=False, extra_configs={}):
+def evaluate_policy(env_name, algo, policy_path, n_episodes=100, coop=False, seed=0, verbose=False, extra_configs={}, log_info=False):
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
     env = make_env(env_name, coop)
     test_agent, _ = load_policy(env, algo, env_name, policy_path, coop, seed, extra_configs)
@@ -170,6 +186,7 @@ def evaluate_policy(env_name, algo, policy_path, n_episodes=100, coop=False, see
     rewards = []
     forces = []
     task_successes = []
+    eval_info = {}
     for episode in range(n_episodes):
         obs = env.reset()
         done = False
@@ -192,12 +209,21 @@ def evaluate_policy(env_name, algo, policy_path, n_episodes=100, coop=False, see
             reward_total += reward
             force_list.append(info['total_force_on_human'])
             task_success = info['task_success']
+            if log_info:
+                for key, val in info.items():
+                    if key not in eval_info:
+                        eval_info[key] = [val]
+                    else:
+                        eval_info[key].append(val)
 
         rewards.append(reward_total)
         forces.append(np.mean(force_list))
         task_successes.append(task_success)
         if verbose:
-            print('Reward total: %.2f, mean force: %.2f, task success: %r' % (reward_total, np.mean(force_list), task_success))
+            print(f'({episode}/{n_episodes}) Reward total: {reward_total:.2f}, mean force: {np.mean(force_list):.2f}, task success: {task_success}')
+            print(f'({episode}/{n_episodes}) Eval info')
+            for key, val_list in eval_info.items():
+                print(f'\t{key} mean: {np.mean(val_list):.03f} std: {np.std(val_list):.03f}')
         sys.stdout.flush()
     env.disconnect()
 
@@ -218,55 +244,66 @@ def evaluate_policy(env_name, algo, policy_path, n_episodes=100, coop=False, see
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RL for Assistive Gym')
-    parser.add_argument('--params_file', default=None,
+    parser.add_argument('params_file', default=None,
                         help='yaml parameter file')
-    parser.add_argument('--env', default='ScratchItchJaco-v0',
-                        help='Environment to train on (default: ScratchItchJaco-v0)')
-    parser.add_argument('--algo', default='ppo',
-                        help='Reinforcement learning algorithm')
-    parser.add_argument('--seed', type=int, default=1,
-                        help='Random seed (default: 1)')
+    parser.add_argument('--cloud', action='store_true', default=False,
+                        help='Cloud mode')
     parser.add_argument('--train', action='store_true', default=False,
                         help='Whether to train a new policy')
+    parser.add_argument('--eval', action='store_true', default=False,
+                        help='Whether to evaluate a new policy')
     parser.add_argument('--render', action='store_true', default=False,
                         help='Whether to render a single rollout of a trained policy')
-    parser.add_argument('--render-eps', type=int, default=5,
-                        help="how many rollouts to render")
-    parser.add_argument('--evaluate', action='store_true', default=False,
-                        help='Whether to evaluate a trained policy over n_episodes')
-    parser.add_argument('--train-timesteps', type=int, default=1000000,
-                        help='Number of simulation timesteps to train a policy (default: 1000000)')
-    parser.add_argument('--save-dir', default='./trained_models/',
-                        help='Directory to save trained policy in (default ./trained_models/)')
-    parser.add_argument('--save-per-iter', type=int, default=1)
-    parser.add_argument('--load-policy-path', default='./trained_models/',
-                        help='Path name to saved policy checkpoint (NOTE: Use this to continue training an existing policy, or to evaluate a trained policy)')
-    parser.add_argument('--eval-episodes', type=int, default=100,
-                        help='Number of evaluation episodes (default: 100)')
-    parser.add_argument('--colab', action='store_true', default=False,
-                        help='Whether rendering should generate an animated png rather than open a window (e.g. when using Google Colab)')
-    parser.add_argument('--verbose', action='store_true', default=False,
-                        help='Whether to output more verbose prints')
+    parser.add_argument('--launch', action='store_true', default=False,
+                        help='Whether to launch')
     args = parser.parse_args()
 
-    if args.params_file:
-        from dotmap import DotMap
-        import yaml
-        with open(args.params_file, "r") as f:
-            args = DotMap(yaml.load(f))
+    """Arguments:
+    Mode:
+        common: env, algo, seed
+        train_args:
+            train-timesteps, save-dir, save-per-iter, load-policy-path
+        eval_args
+            load-policy-path, eval-episodes
+        render_args
+            load-policy-path, eval-episodes, colab
+    """
 
-    coop = ('Human' in args.env) and ('Pose' not in args.env)
+    from dotmap import DotMap
+    import yaml
+
+    params = None
+    with open(args.params_file, "r") as f:
+        params = DotMap(yaml.load(f))
+
+
     checkpoint_path = None
+    env_name, algo, seed = params.env, params.algo, params.seed
+    coop = ('Human' in env_name) and ('Pose' not in env_name)
+
+    if args.cloud:
+        params.save_dir = params.cloud_dir
+
+    # Save to: save_dir/date
+    save_dir = os.path.join(params.save_dir, str(params.date))
+    load_policy_path = os.path.join(params.load_policy_path, str(params.date))
+
     if args.train:
-        print(f"Train on environment {args.env}")
-        checkpoint_path = train(args.env, args.algo, timesteps_total=args.train_timesteps, save_dir=args.save_dir, load_policy_path=args.load_policy_path, coop=coop, seed=args.seed, save_per_iter=args.save_per_iter)
+        p = params.train
+        print(f"Train on environment {env_name}")
+        params.pprint()
+        checkpoint_path = train(env_name, algo, timesteps_total=p.train_timesteps, save_dir=save_dir, load_policy_path=load_policy_path, coop=coop, seed=seed, save_per_iter=p.save_per_iter, params=params.toDict())
+
     if args.render:
-        env = make_env(args.env, coop)
-        env.seed(args.seed)
-        if args.colab:
-            # env.setup_camera(camera_eye=[0.5, -0.75, 1.5], camera_target=[-0.2, 0, 0.75], fov=60, camera_width=1920//4, camera_height=1080//4)
+        p = params.render
+        env = make_env(env_name, coop)
+        env.seed(seed)
+        image_path = os.path.join(p.image_dir, str(params.date))
+        if p.colab:
             env.setup_camera(**camera_configs["BedBathing"])
-        render_policy(env, args.env, args.algo, checkpoint_path if checkpoint_path is not None else args.load_policy_path, coop=coop, colab=args.colab, seed=args.seed, num_eps=args.render_eps)
-    if args.evaluate:
-        evaluate_policy(args.env, args.algo, checkpoint_path if checkpoint_path is not None else args.load_policy_path, n_episodes=args.eval_episodes, coop=coop, seed=args.seed, verbose=args.verbose)
+        render_policy(env, env_name, algo, checkpoint_path if checkpoint_path is not None else load_policy_path, coop=coop, colab=p.colab, seed=seed, num_eps=p.render_eps, image_path=image_path)
+
+    if args.eval:
+        p = params.eval
+        evaluate_policy(env_name, algo, checkpoint_path if checkpoint_path is not None else load_policy_path, n_episodes=p.eval_episodes, coop=coop, seed=seed, verbose=p.verbose, log_info=p.log_info)
 

@@ -30,6 +30,8 @@ setup(name='assistive-gym',
         'trimesh',
         'ray[rllib]',
         'numpngw',
+        # "tensorboardX",
+        # "tensorboard==1.15.0",
         'pandas',
         'dotmap'] + [
         'screeninfo==0.6.1' if sys.version_info >= (3, 6) else 'screeninfo==0.2'],

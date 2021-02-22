@@ -42,8 +42,10 @@ class BedBathingEnv(AssistiveEnv):
 
         reward_distance = -min(self.tool.get_closest_points(self.human, distance=5.0)[-1])
         reward_action = -np.linalg.norm(action) # Penalize actions
+        reward_action_h = -np.linalg.norm(human_action)
+        reward_action_r = -np.linalg.norm(robot_action)
         reward_new_contact_points = self.new_contact_points # Reward new contact points on a person
-        reward_collab = -np.linalg.norm(human_action) * self.env_config("human_action_penalty", self.c_ver) -np.linalg.norm(robot_action) * self.env_config("robot_action_penalty", self.c_ver)
+        reward_collab = reward_action_h * self.env_config("human_action_penalty", self.c_ver) + reward_action_r * self.env_config("robot_action_penalty", self.c_ver)
 
         ## Action reward (*0.1) ~0.025 per step (5.0/episode), reward min~max: 400
         reward = self.config('distance_weight')*reward_distance + self.config('action_weight')*reward_action + self.config('wiping_reward_weight')*reward_new_contact_points + preferences_score + reward_collab
@@ -61,7 +63,9 @@ class BedBathingEnv(AssistiveEnv):
             'obs_human_len': self.obs_human_len,
             'task_reward': self.config('wiping_reward_weight')*reward_new_contact_points + self.config('distance_weight')*reward_distance,
             "preference_reward": preferences_score,
-            "action_reward": self.config('action_weight')*reward_action,
+            "reward_action": reward_action,
+            "reward_action_robot": reward_action_r,
+            "reward_action_human": reward_action_h,
         }
         done = self.iteration >= 200
 

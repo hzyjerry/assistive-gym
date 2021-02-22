@@ -9,10 +9,19 @@ left_leg_joints = [35, 36, 37, 38, 39, 40, 41]
 head_joints = [20, 21, 22, 23]
 
 class Human(Agent):
-    def __init__(self, controllable_joint_indices, controllable=False):
+    def __init__(self, controllable_joint_indices, controllable=False, impairment="random", policy_path=None, seed=0, policy_algo=None):
         super(Human, self).__init__()
+
+        ## Controllable human in 2-agent environment
         self.controllable_joint_indices = controllable_joint_indices
         self.controllable = controllable
+        ## Pretrained human to load from policy_path
+        self.policy_path = policy_path
+        self.policy_seed = seed
+        self.policy_algo = policy_algo
+        self.action_model = None
+
+        ## Human specs
         self.right_pecs = 2
         self.right_shoulder = 5
         self.right_elbow = 7
@@ -52,7 +61,7 @@ class Human(Agent):
         self.j_left_knee = 38
         self.j_left_ankle_x, self.j_left_ankle_y, self.j_left_ankle_z = 39, 40, 41
 
-        self.impairment = 'random'
+        self.impairment = impairment
         self.limit_scale = 1.0
         self.strength = 1.0
         self.tremors = np.zeros(10)
@@ -95,6 +104,14 @@ class Human(Agent):
 
         # By default, initialize the person in the wheelchair
         self.set_base_pos_orient([0, 0.03, 0.89 if self.gender == 'male' else 0.86], [0, 0, 0, 1])
+
+    def load_model(self, env):
+        if self.policy_path is None:
+            return
+        else:
+            from assistive_gym.learn import load_policy
+            # TODO
+            self.action_model, _ = load_policy(env, algo=self.policy_algo, env_name=env.unwrapped.spec.id, policy_path=self.policy_path, coop=False, seed=self.policy_seed, extra_configs={})
 
     def setup_joints(self, joints_positions, use_static_joints=True, reactive_force=None, reactive_gain=0.05):
         # Set static joints
