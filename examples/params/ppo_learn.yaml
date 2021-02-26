@@ -2,29 +2,71 @@
 # env: BedBathingJacoHuman-v0217_r4-v1
 # env: BedBathingJacoHuman-v0217_r8-v1
 # env: BedBathingJacoHuman-v0217_r05-v1
-env: BedBathingJacoHuman-v0217_h3-v1
+# env: BedBathingJacoHuman-v0217_h3-v1
 # env: BedBathingJacoHuman-v0217_h1-v1
 # env: BedBathingJacoHuman-v0217_h05-v1
 # env: BedBathingJacoHuman-v0217_h02-v1
 # env: BedBathingJacoHuman-v0217_0-v1
+# train_robot_only: False
+
+
+# env: BedBathingJacoPersonalized-v0217_h1-v1
+# env: BedBathingJacoPersonalizedScratch-v0217_h1-v1
+env: BedBathingJacoPersonalized-v0217_0-v1
+
+train_robot_only: True
+coop: True
+
 algo: ppo
 seed: 1
-date: 210217
+date: 210223
 cloud_dir: /gcp_output
-load_policy_path: new_models
 save_dir: new_models
 
 train:
   save_per_iter: 10
   train_timesteps: 10000000
+  human_policy_path: human_models
+  robot_policy_path: same
+  # robot_policy_path: null
 
 render:
   render_eps: 25
   colab: true
   image_dir: images
+  ## Human & trained robot
+  save_env_name: human-v0217_h1-robot-v0217_h1
+  human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+
+  # ## Human & personalized robot
+  # save_env_name: human-v0217_h1-robot-personalized
+  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  # robot_policy_path: new_models/210223/ppo/BedBathingJacoPersonalizedScratch-v0217_h1-v1/checkpoint_1040/checkpoint-1040
+
+  # ## Human & baseline robot
+  # save_env_name: human-v0217_h1-robot-v0217_0
+  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  # robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_0-v1/checkpoint_520/checkpoint-520
+
 
 eval:
   train_timesteps: 10000000
   eval_episodes: 100
   verbose: True
   log_info: True
+  ## Human & trained robot
+  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  # robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+
+  # ## Human & personalized robot
+  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  # robot_policy_path: new_models/210223/ppo/BedBathingJacoPersonalizedScratch-v0217_h1-v1/checkpoint_1040/checkpoint-1040
+
+  # ## Human & baseline robot
+  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  # robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_0-v1/checkpoint_520/checkpoint-520
+
+  ## Untrained baseline
+  human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  robot_policy_path: null

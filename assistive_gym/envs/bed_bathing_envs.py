@@ -8,6 +8,7 @@ from .agents.stretch import Stretch
 from .agents.panda import Panda
 from .agents.human import Human
 from .agents.agent_pose_control import HumanPoseControl, JacoPoseControl
+from gym.envs.registration import register
 
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from ray.tune.registry import register_env
@@ -74,15 +75,21 @@ class BedBathingJacoHumanEnv(BedBathingEnv, MultiAgentEnv):
     def __init__(self, frame_skip=5, action_multiplier=0.05, collab_version='v4', time_step=0.02, impairment="random"):
         super(BedBathingJacoHumanEnv, self).__init__(robot=Jaco(robot_arm), human=Human(human_controllable_joint_indices, controllable=True, impairment=impairment), frame_skip=frame_skip, action_multiplier=action_multiplier, collab_version=collab_version, time_step=time_step)
 
+class BedBathingJacoPersonalizedEnv(BedBathingEnv, MultiAgentEnv):
+    def __init__(self, frame_skip=5, action_multiplier=0.05, time_step=0.02, impairment="random"):
+        super(BedBathingJacoPersonalizedEnv, self).__init__(robot=Jaco(robot_arm), human=Human(human_controllable_joint_indices, controllable=True, impairment=impairment), frame_skip=frame_skip, action_multiplier=action_multiplier, time_step=time_step)
+
 
 register_env('assistive_gym:BedBathingJacoHuman-v1', lambda config: BedBathingJacoHumanEnv())
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip1', lambda config: BedBathingJacoHumanEnv(frame_skip=1, action_multiplier=0.25))
 register_env('assistive_gym:BedBathingJacoHuman-v1-skip5', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05))
 
+
 """ 2021.02.21
 - Train with human agents
 """
-register_env(f'assistive_gym:BedBathingJacoPersonalize-{collab_v}-v1', lambda config: BedBathingJacoHumanEnv(frame_skip=5, action_multiplier=0.05, collab_version=collab_v, impairment="none"))
+for collab_v in ["v0217_r8", "v0217_r4", "v0217_r1", "v0217_r05", "v0217_h3", "v0217_h1", "v0217_h05", "v0217_h02", "v0217_0"]:
+    register_env(f'assistive_gym:BedBathingJacoPersonalized-{collab_v}-v1', lambda config: BedBathingJacoPersonalizedEnv(frame_skip=5, action_multiplier=0.05, impairment="none"))
 
 
 """ 2021.02.17

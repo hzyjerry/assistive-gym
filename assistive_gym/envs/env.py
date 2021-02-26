@@ -140,7 +140,6 @@ class AssistiveEnv(gym.Env):
         # Create human
         if self.human is not None and isinstance(self.human, Human):
             self.human.init(self.human_creation, self.human_limits_model, fixed_human_base, human_impairment, gender, self.config, self.id, self.np_random)
-            self.human.load_model(self)
             self.all_agents.append(self.human)
             if self.human.controllable or self.human.impairment == 'tremor':
                 self.agents.append(self.human)

@@ -2,24 +2,26 @@
 
 convert_gifs() {
 
-
     src_dir="/Users/jerry/Dropbox/Projects/AssistRobotics/assistive-gym/images/${folder}"
-    target_dir="/Users/jerry/Dropbox/Projects/AssistRobotics/assistive-gym/images/${folder}/gifs"
 
-
-    mkdir -p "$target_dir"
     IFS=$(echo -en "\n\b")
 
-    for file in `find "$src_dir" -type f -name "*.png"`
+    #for image_folder in `find "$src_dir" -maxdepth 1 -type d`
+    for image_folder in `ls "$src_dir"`
     do
-        # src_file=`echo "${file/.mp4/.}"`
-        tgt_file=`echo "${file/$src_dir/$target_dir}"`
-        tgt_file=`echo "${tgt_file/.png/.gif}"`
-        # echo "$tgt_file"
-        # ffmpeg -i "$file" -r 10 "$tgt_file"
-        ffmpeg -i "$file" -r 10 -s 320x180 "$tgt_file" -y
-    done
+        target_folder="$src_dir/$image_folder/gifs"
+        mkdir -p $src_dir/$image_folder/gifs
 
+        for file in `ls -f "$src_dir/$image_folder" | grep .png`
+        do
+            src_file=$src_dir/$image_folder/$file
+            tgt_file=$src_dir/$image_folder/gifs/$file
+            tgt_file=`echo "${tgt_file/.png/.gif}"`
+            if [ ! -f "$tgt_file" ]; then
+                ffmpeg -i "$src_file" -r 10 -s 320x180 "$tgt_file" -y
+            fi
+        done
+    done
 
     # ffmpeg -i "$filename".mp4 -r 10 "$filename".gif
 

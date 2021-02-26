@@ -1,5 +1,5 @@
 ## Check logs
-gsutil ls -lh "gs://universal-planning-experiments/rss-logs/" | sort -k 3
+gsutil ls -lh "gs://assistive-gym-experiments/rss-logs/" | sort -k 3
 
 
 

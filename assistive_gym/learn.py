@@ -4,7 +4,7 @@ import numpy as np
 from ray.rllib.agents import ppo, sac
 from ray.tune.logger import pretty_print
 from numpngw import write_apng
-
+from assistive_gym.env_dispatch import get_personalized_env_v0
 
 camera_configs = {
     "BedBathing": {
@@ -18,7 +18,7 @@ camera_configs = {
 }
 
 
-def setup_config(env, algo, coop=False, seed=0, extra_configs={}):
+def setup_config(env, algo, coop=False, seed=0, train_robot_only=False, extra_configs={}):
     num_processes = multiprocessing.cpu_count()
     if algo == 'ppo':
         config = ppo.DEFAULT_CONFIG.copy()
@@ -41,19 +41,26 @@ def setup_config(env, algo, coop=False, seed=0, extra_configs={}):
         policies = {'robot': (None, env.observation_space_robot, env.action_space_robot, {}), 'human': (None, env.observation_space_human, env.action_space_human, {})}
         config['multiagent'] = {'policies': policies, 'policy_mapping_fn': lambda a: a}
         config['env_config'] = {'num_agents': 2}
+    if train_robot_only:
+        config['multiagent']['policies_to_train'] = ["robot"]
     return {**config, **extra_configs}
 
-def load_policy(env, algo, env_name, policy_path=None, coop=False, seed=0, extra_configs={}):
+def load_policy(env, algo, env_name, policy_path=None, coop=False, seed=0, train_robot_only=False, extra_configs={}):
     if algo == 'ppo':
-        agent = ppo.PPOTrainer(setup_config(env, algo, coop, seed, extra_configs), 'assistive_gym:'+env_name)
+        agent = ppo.PPOTrainer(setup_config(env, algo, coop, seed, train_robot_only, extra_configs), 'assistive_gym:'+env_name)
     elif algo == 'sac':
-        agent = sac.SACTrainer(setup_config(env, algo, coop, seed, extra_configs), 'assistive_gym:'+env_name)
+        agent = sac.SACTrainer(setup_config(env, algo, coop, seed, train_robot_only, extra_configs), 'assistive_gym:'+env_name)
     if policy_path != '':
         if 'checkpoint' in policy_path:
             agent.restore(policy_path)
         else:
-            # Find the most recent policy in the directory
-            directory = os.path.join(policy_path, algo, env_name)
+
+            if algo not in policy_path:
+                # Find the most recent policy in the directory
+                # print(f"Policy path {policy_path} algo {algo} env name {env_name}")
+                directory = os.path.join(policy_path, algo, env_name)
+            else:
+                directory = policy_path
             files = [int(f.split('_')[-1]) for f in glob.glob(os.path.join(directory, 'checkpoint_*'))]
             if files:
                 checkpoint_num = max(files)
@@ -66,6 +73,30 @@ def load_policy(env, algo, env_name, policy_path=None, coop=False, seed=0, extra
             return agent, None
     return agent, None
 
+def load_policy_pair(env, algo, env_name, human_policy_path=None, robot_policy_path=None, coop=False, seed=0, train_robot_only=False, extra_configs={}):
+    def get_agent():
+        if algo == 'ppo':
+            agent = ppo.PPOTrainer(setup_config(env, algo, coop, seed, train_robot_only, extra_configs), 'assistive_gym:'+env_name)
+        elif algo == 'sac':
+            agent = sac.SACTrainer(setup_config(env, algo, coop, seed, train_robot_only, extra_configs), 'assistive_gym:'+env_name)
+        return agent
+    agent = get_agent()
+    if human_policy_path and 'checkpoint' in human_policy_path:
+        init_human_params = agent.get_weights()['human']
+        init_robot_params = agent.get_weights()['robot']
+        print(f"Load human policy from {human_policy_path}")
+        agent.restore(human_policy_path)
+        if robot_policy_path is None:
+            human_params = agent.get_weights()['human']
+            agent.set_weights({'human': human_params, 'robot': init_robot_params})
+        else:
+            human_params = agent.get_weights()['human']
+            print(f"Load robot policy from {robot_policy_path}")
+            agent.restore(robot_policy_path)
+            robot_params = agent.get_weights()['robot']
+            agent.set_weights({'human': human_params, 'robot': robot_params})
+    return agent, None
+
 def make_env(env_name, coop=False):
     if not coop:
         return gym.make('assistive_gym:'+env_name)
@@ -74,23 +105,26 @@ def make_env(env_name, coop=False):
         env_class = getattr(module, env_name.split('-')[0] + 'Env')
         return env_class()
 
-def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/', load_policy_path='', coop=False, seed=0, extra_configs={}, save_per_iter=1, params={}):
+def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/', human_policy_path='', robot_policy_path='', coop=False, train_robot_only=False, seed=0, extra_configs={}, save_per_iter=1, params={}, save_env_name=None):
     from torch.utils.tensorboard import SummaryWriter
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
     env = make_env(env_name, coop)
-    agent, checkpoint_path = load_policy(env, algo, env_name, load_policy_path, coop, seed, extra_configs)
+    agent, checkpoint_path = load_policy_pair(env, algo, env_name, human_policy_path, robot_policy_path, coop, seed, train_robot_only=train_robot_only, extra_configs=extra_configs)
     env.disconnect()
 
-    save_path = os.path.join(save_dir, algo, env_name)
+    save_env_name = env_name if save_env_name is None else save_env_name
+    save_path = os.path.join(save_dir, algo, save_env_name)
     print(f"Saving to {save_path}")
     os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "params.yaml"), "w+") as f:
         yaml.dump(params, f)
-    writer = SummaryWriter(log_dir=os.path.join(save_dir, "runs", env_name), comment=env_name)
+    writer = SummaryWriter(log_dir=os.path.join(save_dir, "runs", save_env_name), comment=save_env_name)
 
-    timesteps = 0
+    timesteps = -1 # allow finetuning checkpoints, i.e. training 10M more steps from a 10M checkpoint
     while timesteps < timesteps_total:
         result = agent.train()
+        if timesteps < 0:
+            timesteps_total += result['timesteps_total']
         timesteps = result['timesteps_total']
         if coop:
             # Rewards are added in multi agent envs, so we divide by 2 since agents share the same reward in coop
@@ -117,14 +151,14 @@ def train(env_name, algo, timesteps_total=1000000, save_dir='./trained_models/',
     writer.close()
     return checkpoint_path
 
-def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, seed=0, extra_configs={}, num_eps=1, image_path="."):
+def render_policy(env, env_name, algo, human_policy_path=None, robot_policy_path=None, coop=False, colab=False, seed=0, extra_configs={}, num_eps=1, image_path=".", save_env_name=None):
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
-    test_agent, _ = load_policy(env, algo, env_name, policy_path, coop, seed, extra_configs)
+    save_env_name = env_name if save_env_name is None else save_env_name
+    test_agent, _ = load_policy_pair(env, algo, env_name, human_policy_path, robot_policy_path, coop, seed, extra_configs=extra_configs)
 
     os.makedirs(image_path, exist_ok=True)
     if not colab:
         env.render()
-    # import pdb; pdb.set_trace()
     for eps_i in range(num_eps):
         print(f"Render eps {eps_i}")
         obs = env.reset()
@@ -141,7 +175,6 @@ def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, see
                 done = done['__all__']
                 rew = reward if not rew else {key: rew[key] + reward[key] for key in reward.keys()}
                 # print(f"Task reward {info['robot']['task_reward']:.04f} action reward {info['robot']['action_reward']:.04f}, preference reward {info['robot']['preference_reward']:.04f}")
-                # import pdb; pdb.set_trace()
             else:
                 # Compute the next action using the trained policy
                 action = test_agent.compute_action(obs)
@@ -162,12 +195,11 @@ def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, see
                 frames.append(img)
         if colab:
             if coop:
-                filename = f"{image_path}/output_{env_name}_{eps_i:02d}_rew_{rew['robot']:.03f}.png"
+                filename = f"{image_path}/{save_env_name}_{eps_i:02d}_rew_{rew['robot']:.03f}.png"
             else:
-                filename = f"{image_path}/output_{env_name}_{eps_i:02d}_rew_{rew:.03f}.png"
+                filename = f"{image_path}/{save_env_name}_{eps_i:02d}_rew_{rew:.03f}.png"
             write_apng(filename, frames, delay=50)
             # filename = f'output_{env_name}_{eps_i:02d}.gif'
-            # import pdb; pdb.set_trace()
             # write_gif(frames, filename, fps=20)
             #return filename
         if coop:
@@ -178,10 +210,13 @@ def render_policy(env, env_name, algo, policy_path, coop=False, colab=False, see
     env.disconnect()
 
 
-def evaluate_policy(env_name, algo, policy_path, n_episodes=100, coop=False, seed=0, verbose=False, extra_configs={}, log_info=False):
+def evaluate_policy(env_name, algo, human_policy_path=None, robot_policy_path=None, n_episodes=100, coop=False, seed=0, verbose=False, extra_configs={}, log_info=False):
     ray.init(num_cpus=multiprocessing.cpu_count(), ignore_reinit_error=True, log_to_driver=False)
     env = make_env(env_name, coop)
-    test_agent, _ = load_policy(env, algo, env_name, policy_path, coop, seed, extra_configs)
+    # import pdb; pdb.set_trace()
+
+    test_agent, _ = load_policy_pair(env, algo, env_name, human_policy_path, robot_policy_path, coop, seed, train_robot_only=train_robot_only, extra_configs=extra_configs)
+    # import pdb; pdb.set_trace()
 
     rewards = []
     forces = []
@@ -279,31 +314,66 @@ if __name__ == '__main__':
 
     checkpoint_path = None
     env_name, algo, seed = params.env, params.algo, params.seed
-    coop = ('Human' in env_name) and ('Pose' not in env_name)
 
+    ## Cooperative environment, uses ray.multiagent
+    coop = params.coop
+    ## Only trains robot policy
+    train_robot_only = params.train_robot_only
+
+    ## Some hacky sanity checks
+    if "Pose" in env_name:
+        assert not coop
+    if "Personalized" in env_name:
+        assert coop and train_robot_only
     if args.cloud:
         params.save_dir = params.cloud_dir
 
+    def get_policy_paths(env_name, p):
+        ## Overrides load_policy_path
+        if "Personalized" in env_name:
+            human_policy_path = get_personalized_env_v0(env_name)
+            robot_policy_path = p.robot_policy_path
+        else:
+            human_policy_path = p.human_policy_path
+            robot_policy_path = p.robot_policy_path
+
+        save_env_name = env_name
+        if robot_policy_path is None:
+            # Train from scratch
+            # BedBathingJacoPersonalized-v0217_h1-v1 -> BedBathingJacoPersonalizedScratch-v0217_h1-v1
+            save_env_name = env_name.split("-", 1)[0] + "Scratch-" + "-".joienv_name.split("-", 1)[1]
+        elif robot_policy_path == "same":
+            robot_policy_path = human_policy_path
+        return human_policy_path, robot_policy_path, save_env_name
+
+
     # Save to: save_dir/date
     save_dir = os.path.join(params.save_dir, str(params.date))
-    load_policy_path = os.path.join(params.load_policy_path, str(params.date))
-
     if args.train:
         p = params.train
         print(f"Train on environment {env_name}")
         params.pprint()
-        checkpoint_path = train(env_name, algo, timesteps_total=p.train_timesteps, save_dir=save_dir, load_policy_path=load_policy_path, coop=coop, seed=seed, save_per_iter=p.save_per_iter, params=params.toDict())
+        human_policy_path, robot_policy_path, save_env_name = get_policy_paths(env_name, p)
+        checkpoint_path = train(env_name, algo, timesteps_total=p.train_timesteps, save_dir=save_dir, human_policy_path=human_policy_path, robot_policy_path=robot_policy_path, coop=coop, train_robot_only=train_robot_only, seed=seed, save_per_iter=p.save_per_iter, params=params.toDict(), save_env_name=save_env_name)
 
     if args.render:
         p = params.render
+        print(f"Render on environment {env_name}")
+        params.pprint()
+        human_policy_path = p.human_policy_path
+        robot_policy_path = p.robot_policy_path
+        save_env_name = p.save_env_name
         env = make_env(env_name, coop)
         env.seed(seed)
-        image_path = os.path.join(p.image_dir, str(params.date))
+        image_path = os.path.join(p.image_dir, str(params.date), save_env_name)
         if p.colab:
             env.setup_camera(**camera_configs["BedBathing"])
-        render_policy(env, env_name, algo, checkpoint_path if checkpoint_path is not None else load_policy_path, coop=coop, colab=p.colab, seed=seed, num_eps=p.render_eps, image_path=image_path)
+        render_policy(env, env_name, algo, human_policy_path, robot_policy_path, coop=coop, colab=p.colab, seed=seed, num_eps=p.render_eps, image_path=image_path, save_env_name=save_env_name)
 
     if args.eval:
         p = params.eval
-        evaluate_policy(env_name, algo, checkpoint_path if checkpoint_path is not None else load_policy_path, n_episodes=p.eval_episodes, coop=coop, seed=seed, verbose=p.verbose, log_info=p.log_info)
-
+        print(f"Eval on environment {env_name}")
+        human_policy_path = p.human_policy_path
+        robot_policy_path = p.robot_policy_path
+        evaluate_policy(env_name, algo, human_policy_path, robot_policy_path, n_episodes=p.eval_episodes, coop=coop, seed=seed, verbose=p.verbose, log_info=p.log_info)
+        params.pprint()

@@ -103,3 +103,5 @@ register(
     entry_point='assistive_gym.envs:BedBathingJacoRobotPoseEnv',
     max_episode_steps=200,
 )
+
+

@@ -210,9 +210,10 @@ class BedBathingEnv(AssistiveEnv):
 
         self.init_env_variables()
 
+
+        ## Initialize human & robot controllers
         if isinstance(self.robot, RobotPoseControl):
             self.robot.reset()
-
         if isinstance(self.human, HumanPoseControl):
             self.human.reset()
 
