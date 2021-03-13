@@ -1,0 +1,42 @@
+#============================== Parameter guideline ==============================
+#===== Training:
+#=====    save_env_name: for model saving/retrieving
+#=====    coop: if True, both human & robot actionable, else human static
+#=====
+#=====
+
+
+# env: BedBathingJacoPersonalized-v0217_h1-v1
+env: BedBathingJacoPersonalized-v0217_0-v1
+# env: BedBathingJacoPersonalized-v0217_0-v1
+# env: BedBathingJaco-v1
+
+train_robot_only: True
+# coop: True
+
+algo: ppo
+seed: 1
+date: 210307
+cloud_dir: /gcp_output
+save_dir: new_models
+
+
+train_timesteps: 10000000
+eval_episodes: 100
+verbose: True
+log_info: True
+## Human & trained robot
+# human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+# robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+
+# ## Human & personalized robot
+# human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+# robot_policy_path: new_models/210223/ppo/BedBathingJacoPersonalizedScratch-v0217_h1-v1/checkpoint_1040/checkpoint-1040
+
+# ## Human & baseline robot
+# human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+# robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_0-v1/checkpoint_520/checkpoint-520
+
+# ## Untrained baseline
+# human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+# robot_policy_path: null

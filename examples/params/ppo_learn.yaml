@@ -1,72 +1,39 @@
-# env: BedBathingJacoHuman-v0217_r1-v1
-# env: BedBathingJacoHuman-v0217_r4-v1
-# env: BedBathingJacoHuman-v0217_r8-v1
-# env: BedBathingJacoHuman-v0217_r05-v1
-# env: BedBathingJacoHuman-v0217_h3-v1
-# env: BedBathingJacoHuman-v0217_h1-v1
-# env: BedBathingJacoHuman-v0217_h05-v1
-# env: BedBathingJacoHuman-v0217_h02-v1
-# env: BedBathingJacoHuman-v0217_0-v1
-# train_robot_only: False
+#============================== Parameter guideline ==============================
+#===== Training:
+#=====    save_env_name: for model saving/retrieving
+#=====    coop: if True, both human & robot actionable, else human static
+#=====
+#=====    human_policy_path: str, checkpoint path
+#=====    human_policy_coop: bool, if true, checkpoint human is trained with (coop=True)
+#=====    robot_policy_path: str, checkpoint path
+#=====    robot_policy_coop: bool, if true, checkpoint robot is trained with (coop=True)
+#=====
 
-
-# env: BedBathingJacoPersonalized-v0217_h1-v1
-# env: BedBathingJacoPersonalizedScratch-v0217_h1-v1
-env: BedBathingJacoPersonalized-v0217_0-v1
+env: BedBathingJacoPersonalized-noimpair-v1
 
 train_robot_only: True
 coop: True
 
+policy_pair:
+  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_r4-v1/checkpoint_520/checkpoint-520
+  human_policy_coop: True
+  # robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  # robot_policy_path: null
+  # robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_r4-v1/checkpoint_520/checkpoint-520
+  robot_policy_path: null
+  robot_policy_coop: True
+
+# save_env_name: human-v0217_h1-robot-v0217_h1
+# save_env_name: human-v0217_h1-robot-scratch
+# save_env_name: human-v0217_r4-robot-v0217_r4
+save_env_name: human-v0217_r4-robot-scratch
 algo: ppo
 seed: 1
-date: 210223
+date: 210313
 cloud_dir: /gcp_output
 save_dir: new_models
 
-train:
-  save_per_iter: 10
-  train_timesteps: 10000000
-  human_policy_path: human_models
-  robot_policy_path: same
-  # robot_policy_path: null
+save_per_iter: 10
+train_timesteps: 10000000
 
-render:
-  render_eps: 25
-  colab: true
-  image_dir: images
-  ## Human & trained robot
-  save_env_name: human-v0217_h1-robot-v0217_h1
-  human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-  robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-
-  # ## Human & personalized robot
-  # save_env_name: human-v0217_h1-robot-personalized
-  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-  # robot_policy_path: new_models/210223/ppo/BedBathingJacoPersonalizedScratch-v0217_h1-v1/checkpoint_1040/checkpoint-1040
-
-  # ## Human & baseline robot
-  # save_env_name: human-v0217_h1-robot-v0217_0
-  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-  # robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_0-v1/checkpoint_520/checkpoint-520
-
-
-eval:
-  train_timesteps: 10000000
-  eval_episodes: 100
-  verbose: True
-  log_info: True
-  ## Human & trained robot
-  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-  # robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-
-  # ## Human & personalized robot
-  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-  # robot_policy_path: new_models/210223/ppo/BedBathingJacoPersonalizedScratch-v0217_h1-v1/checkpoint_1040/checkpoint-1040
-
-  # ## Human & baseline robot
-  # human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-  # robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_0-v1/checkpoint_520/checkpoint-520
-
-  ## Untrained baseline
-  human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
-  robot_policy_path: null

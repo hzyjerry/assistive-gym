@@ -88,8 +88,8 @@ register_env('assistive_gym:BedBathingJacoHuman-v1-skip5', lambda config: BedBat
 """ 2021.02.21
 - Train with human agents
 """
-for collab_v in ["v0217_r8", "v0217_r4", "v0217_r1", "v0217_r05", "v0217_h3", "v0217_h1", "v0217_h05", "v0217_h02", "v0217_0"]:
-    register_env(f'assistive_gym:BedBathingJacoPersonalized-{collab_v}-v1', lambda config: BedBathingJacoPersonalizedEnv(frame_skip=5, action_multiplier=0.05, impairment="none"))
+# No impairment
+register_env(f'assistive_gym:BedBathingJacoPersonalized-noimpair-v1', lambda config: BedBathingJacoPersonalizedEnv(frame_skip=5, action_multiplier=0.05, impairment="none"))
 
 
 """ 2021.02.17

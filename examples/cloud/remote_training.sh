@@ -31,4 +31,4 @@ unzip assets.zip
 mv assets assistive_gym/envs/assets
 ## Run experiment
 cat examples/params/ppo_learn.yaml
-python3 -m assistive_gym.learn examples/params/ppo_learn.yaml --train --cloud
+python3 -m assistive_gym.learn examples/params/ppo_learn.yaml --cloud

@@ -1,0 +1,35 @@
+#============================== Parameter guideline ==============================
+#===== Training:
+#=====    save_env_name: for model saving/retrieving
+#=====    coop: if True, both human & robot actionable, else human static
+#=====
+#=====
+
+
+env: BedBathingJacoPersonalized-noimpair-v1
+
+coop: True
+
+policy_pair:
+  human_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  human_policy_coop: True
+  robot_policy_path: human_models/ppo/BedBathingJacoHuman-v0217_h1-v1/checkpoint_520/checkpoint-520
+  # robot_policy_path: null
+  robot_policy_coop: True
+
+
+algo: ppo
+seed: 1
+date: 210307
+cloud_dir: /gcp_output
+save_dir: new_models
+
+
+render_eps: 25
+coop: true
+save_fig: true
+image_dir: images
+
+
+save_env_name: human-v0217_h1-robot-v0217_h1
+

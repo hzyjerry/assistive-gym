@@ -1,13 +1,12 @@
 
 run_learn() {
     algo="ppo"
-    python assistive_gym/learn.py examples/params/${algo}_learn.yaml --train
-    # python assistive_gym/learn.py examples/params/ppo_learn.yaml --train
+    python assistive_gym/learn.py examples/params/${algo}_learn.yaml
 }
 
 launch_learn() {
     algo="ppo"
-    python examples/launch_training.py examples/params/${algo}_learn.yaml --train  --launch
+    python examples/launch_training.py examples/params/${algo}_learn.yaml  --launch
 }
 
 
@@ -15,13 +14,13 @@ run_eval() {
     algo="ppo"
     out_file="$1"
     echo "Running eval to $out_file"
-    python assistive_gym/learn.py examples/params/${algo}_learn.yaml --eval | tee $out_file
+    python assistive_gym/eval.py examples/params/${algo}_eval.yaml | tee $out_file
 }
 
 # TODO: eval all envs in a directory
 launch_eval() {
     algo="ppo"
-    python assistive_gym/learn.py examples/params/${algo}_learn.yaml --eval --launch
+    python assistive_gym/eval.py examples/params/${algo}_eval.yaml --launch
 }
 
 
@@ -30,7 +29,7 @@ launch_eval() {
 run_render() {
     echo "Rendering"
     algo="ppo"
-    python assistive_gym/learn.py examples/params/${algo}_learn.yaml --render
+    python assistive_gym/render.py examples/params/${algo}_render.yaml
 }
 
 

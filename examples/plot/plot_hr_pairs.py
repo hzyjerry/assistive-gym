@@ -32,7 +32,7 @@ def plot_files(folder):
         all_vals = []
         all_keys = []
         # for key in all_profs.keys():
-        for key in ["human-v0217_h1-robot-scratch.txt", "human-v0217_h1-robot-v0217_0.txt", "human-v0217_h1-robot-v0217_h1.txt", "human-v0217_h1-robot-personalized.txt"]:
+        for key in ["human-v0217_h1-robot-scratch.txt", "human-v0217_h1-robot-v0217_0.txt", "human-v0217_h1-robot-personalized.txt"]:
             profs = all_profs[key]
             all_keys.append(key.replace("-robot", "\nrobot").replace(".txt", ""))
             all_vals.append(profs[m])
